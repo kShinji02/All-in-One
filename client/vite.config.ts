@@ -15,6 +15,11 @@ export default defineConfig({
     },
   },
   server: {
+    // Hosts externos aceitos pelo servidor de desenvolvimento.
+    // O ponto inicial libera todos os subdomínios do Cloudflare Tunnel (a URL muda
+    // a cada execução), mantendo a proteção contra DNS rebinding para outros hosts.
+    // Não use `allowedHosts: true`.
+    allowedHosts: ['.trycloudflare.com'],
     proxy: {
       '/api': {
         target: 'http://localhost:3001',
