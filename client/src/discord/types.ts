@@ -5,6 +5,17 @@ export interface DiscordUser {
   avatarUrl: string;
 }
 
+/** Usuário conectado à mesma instância da Activity (não necessariamente todo o canal de voz). */
+export interface DiscordParticipant {
+  id: string;
+  username: string;
+  /** Apelido no servidor, nome global ou username, nessa ordem de preferência. */
+  displayName: string;
+  globalName: string | null;
+  avatarUrl: string;
+  bot: boolean;
+}
+
 export interface DiscordGuild {
   id: string;
   name: string;

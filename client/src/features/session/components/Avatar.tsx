@@ -10,7 +10,9 @@ interface AvatarProps {
 
 /** Imagem com fallback para a inicial do nome caso a URL falhe ou não exista. */
 export function Avatar({ src, label, className, shape = 'circle' }: AvatarProps) {
-  const [failed, setFailed] = useState(false);
+  // Guarda qual URL falhou: se a URL mudar (ex.: o usuário trocou o avatar), a nova é tentada.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const failed = src !== null && failedSrc === src;
   const radius = shape === 'circle' ? 'rounded-full' : 'rounded-xl';
 
   if (!src || failed) {
@@ -32,7 +34,7 @@ export function Avatar({ src, label, className, shape = 'circle' }: AvatarProps)
     <img
       src={src}
       alt=""
-      onError={() => setFailed(true)}
+      onError={() => setFailedSrc(src)}
       className={cn('shrink-0 object-cover ring-1 ring-white/10', radius, className)}
     />
   );

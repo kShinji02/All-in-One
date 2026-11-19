@@ -31,9 +31,9 @@ export const featureModules: readonly FeatureModule[] = [
   {
     id: 'participants',
     name: 'Participantes',
-    description: 'Quem está na atividade, com presença e papéis.',
+    description: 'Quem está conectado à instância da Activity, atualizado em tempo real.',
     icon: Users,
-    status: 'planned',
+    status: 'available',
     accent: 'electric',
   },
   {

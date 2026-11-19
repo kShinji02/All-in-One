@@ -88,6 +88,25 @@ O servidor e o canal aparecem como **Indisponível** quando a consulta não é p
 contexto (por exemplo, em mensagens diretas, que exigiriam `dm_channels.read`, um escopo que
 depende de aprovação do Discord).
 
+## Participantes (Fase 3)
+
+A seção **Participantes** lista os usuários conectados à **mesma instância** da Activity
+(`getActivityInstanceConnectedParticipants` + evento `ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE`).
+Quem está no canal de voz sem abrir a Activity **não** aparece. Nenhum escopo OAuth2 extra é
+necessário.
+
+Roteiro com duas contas (A e B):
+
+| Passo | Ação | Resultado esperado |
+|---|---|---|
+| 1 | A abre a Activity num canal de voz | A aparece primeiro, com o selo "Você"; contador "1 na Activity" |
+| 2 | B entra no mesmo canal e abre a mesma Activity | B aparece na tela de A sem recarregar; contador "2 na Activity" nas duas telas |
+| 3 | B fecha a Activity | B sai com animação na tela de A; contador volta a 1 |
+| 4 | B abre e fecha a Activity algumas vezes | Nenhuma duplicação; a lista continua atualizando |
+| 5 | B fica no canal sem abrir a Activity | B não aparece na lista |
+
+Se o Discord não responder a um comando em 10 s, a seção mostra o erro com **Tentar novamente**.
+
 ## Observação sobre HMR
 
 O `vite.config.ts` usa `hmr.clientPort: 443` para funcionar através do túnel HTTPS. Ao abrir

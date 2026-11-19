@@ -36,6 +36,7 @@
   --shadow-electric: 0 0 0 1px rgb(46 139 255 / 0.25), 0 8px 32px -8px rgb(46 139 255 / 0.35);
 
   --animate-fade-up: fade-up 600ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-fade-out: fade-out 260ms cubic-bezier(0.4, 0, 1, 1) forwards;
   --animate-glow: glow 6s ease-in-out infinite;
   --animate-orbit: orbit 18s linear infinite;
 
@@ -47,6 +48,17 @@
     to {
       opacity: 1;
       transform: translateY(0);
+    }
+  }
+
+  @keyframes fade-out {
+    from {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translateX(8px) scale(0.98);
     }
   }
 

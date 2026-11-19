@@ -2,6 +2,7 @@ import { EnvironmentPanel } from '@/features/home/components/EnvironmentPanel';
 import { ModuleCard } from '@/features/home/components/ModuleCard';
 import { featureModules } from '@/features/registry';
 import { ConnectionPanel } from '@/features/session/ConnectionPanel';
+import { ParticipantsView } from '@/features/participants/ParticipantsView';
 import type { LaunchContext } from '@/lib/launch-context';
 
 interface HomeViewProps {
@@ -27,7 +28,10 @@ export function HomeView({ launch }: HomeViewProps) {
         <EnvironmentPanel launch={launch} />
       </section>
 
-      <ConnectionPanel />
+      <div className="grid items-start gap-6 lg:grid-cols-2">
+        <ConnectionPanel />
+        <ParticipantsView />
+      </div>
 
       <section aria-labelledby="modules-heading">
         <div className="mb-5 flex items-end justify-between gap-4">
