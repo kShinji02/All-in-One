@@ -1,5 +1,6 @@
 import { BrandMark } from '@/components/brand/BrandMark';
 import { StatusPill } from '@/components/ui/StatusPill';
+import { UserChip } from '@/features/session/components/UserChip';
 import type { LaunchContext } from '@/lib/launch-context';
 
 interface AppHeaderProps {
@@ -17,13 +18,16 @@ export function AppHeader({ launch }: AppHeaderProps) {
           </span>
         </div>
 
-        {launch.isDiscord ? (
-          <StatusPill tone="ok" pulse>
-            Discord
-          </StatusPill>
-        ) : (
-          <StatusPill tone="neutral">Navegador</StatusPill>
-        )}
+        <div className="flex min-w-0 items-center gap-2">
+          <UserChip />
+          {launch.isDiscord ? (
+            <StatusPill tone="ok" pulse>
+              Discord
+            </StatusPill>
+          ) : (
+            <StatusPill tone="neutral">Navegador</StatusPill>
+          )}
+        </div>
       </div>
     </header>
   );

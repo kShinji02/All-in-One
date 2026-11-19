@@ -3,6 +3,7 @@ import { Cpu, KeyRound, MonitorSmartphone, Server } from 'lucide-react';
 import { GlassPanel } from '@/components/ui/GlassPanel';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { env } from '@/config/env';
+import { useDiscord } from '@/discord/useDiscord';
 import type { LaunchContext } from '@/lib/launch-context';
 
 interface EnvironmentPanelProps {
@@ -47,11 +48,27 @@ export function EnvironmentPanel({ launch }: EnvironmentPanelProps) {
         </Row>
 
         <Row icon={<Server className="size-4" />} label="Embedded App SDK">
-          <StatusPill tone="neon">Próxima fase</StatusPill>
+          <SdkStatus />
         </Row>
       </dl>
     </GlassPanel>
   );
+}
+
+function SdkStatus() {
+  const { state } = useDiscord();
+  switch (state.status) {
+    case 'ready':
+      return <StatusPill tone="ok">Autenticado</StatusPill>;
+    case 'connecting':
+      return <StatusPill tone="neon">Conectando</StatusPill>;
+    case 'error':
+      return <StatusPill tone="warn">Erro</StatusPill>;
+    case 'misconfigured':
+      return <StatusPill tone="warn">Sem Client ID</StatusPill>;
+    case 'unavailable':
+      return <StatusPill tone="neutral">Inativo</StatusPill>;
+  }
 }
 
 function Row({ icon, label, children }: { icon: ReactNode; label: string; children: ReactNode }) {

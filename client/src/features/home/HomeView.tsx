@@ -1,6 +1,7 @@
 import { EnvironmentPanel } from '@/features/home/components/EnvironmentPanel';
 import { ModuleCard } from '@/features/home/components/ModuleCard';
 import { featureModules } from '@/features/registry';
+import { ConnectionPanel } from '@/features/session/ConnectionPanel';
 import type { LaunchContext } from '@/lib/launch-context';
 
 interface HomeViewProps {
@@ -25,6 +26,8 @@ export function HomeView({ launch }: HomeViewProps) {
 
         <EnvironmentPanel launch={launch} />
       </section>
+
+      <ConnectionPanel />
 
       <section aria-labelledby="modules-heading">
         <div className="mb-5 flex items-end justify-between gap-4">
