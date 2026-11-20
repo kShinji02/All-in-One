@@ -57,6 +57,13 @@ test("instância inexistente (404) → 4003 instance_not_found", async () => {
   await rejectsWith(verifier(fetchImpl).assertMember("i-999-gc-1-2", USER_A.id), CloseCode.FORBIDDEN, "instance_not_found");
 });
 
+test("id que o Discord não reconhece (400) → 4003 instance_not_found, sem log", async () => {
+  const { fetchImpl } = createFakeFetch(() => json(400, { message: "Invalid Form Body", code: 50035 }));
+  const { lines, logger } = captureLogger();
+  await rejectsWith(verifier(fetchImpl, { logger }).assertMember("i-1", USER_A.id), CloseCode.FORBIDDEN, "instance_not_found");
+  assert.equal(lines.length, 0);
+});
+
 test("isolamento: cada instância tem seus próprios membros", async () => {
   const { fetchImpl } = defaultDiscord();
   const v = verifier(fetchImpl);

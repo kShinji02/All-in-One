@@ -22,11 +22,18 @@ export function createDiscordAuthenticator({ applicationId, botToken, fetchImpl,
       throw new ChatCloseError(CloseCode.BAD_REQUEST, "invalid_instance");
     }
 
-    const [user, snapshot] = await Promise.all([
+    // As duas consultas correm em paralelo, mas a identidade tem prioridade: se o token
+    // for inválido, a resposta é sempre invalid_token, mesmo que a consulta da instância
+    // termine antes. Assim um cliente não autenticado não descobre se uma instância existe.
+    const [userResult, snapshotResult] = await Promise.allSettled([
       tokens.validate(accessToken),
       instances.getSnapshot(instanceId),
     ]);
-    await instances.assertMember(instanceId, user.id, snapshot);
+    if (userResult.status === "rejected") throw userResult.reason;
+    if (snapshotResult.status === "rejected") throw snapshotResult.reason;
+
+    const user = userResult.value;
+    await instances.assertMember(instanceId, user.id, snapshotResult.value);
 
     return { user, instanceId };
   }

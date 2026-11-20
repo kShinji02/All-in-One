@@ -103,7 +103,8 @@ test("autenticação bem-sucedida envia ready só com campos públicos e cancela
   await delay(300); // além do prazo de autenticação (150 ms)
   assert.equal(ws.readyState, WebSocket.OPEN, "conexão autenticada não deve expirar");
   assert.deepEqual(received, { accessToken: FAKE_TOKEN, instanceId: validAuth.instanceId });
-  assert.deepEqual(messages, [{ type: "ready", self: fakeUser }]);
+  // Etapa 3: o histórico da sala chega logo após o ready.
+  assert.deepEqual(messages, [{ type: "ready", self: fakeUser }, { type: "history", messages: [] }]);
   assert.ok(!JSON.stringify(messages).includes(FAKE_TOKEN), "o token não volta ao cliente");
   ws.close();
 });
@@ -197,12 +198,12 @@ test("frame acima de 4 KB encerra com 1009", async () => {
   assert.equal((await waitClose(ws)).code, 1009);
 });
 
-test("após autenticar, mensagens ainda não suportadas recebem erro sem derrubar a conexão", async () => {
+test("após autenticar, tipos de mensagem desconhecidos recebem erro sem derrubar a conexão", async () => {
   const { url } = await startServer({ authenticate: async (input) => ({ user: fakeUser, instanceId: input.instanceId }) });
   const { ws, messages } = await connect(`${url}/api/chat`);
   ws.send(JSON.stringify(validAuth));
   await delay(50);
-  ws.send(JSON.stringify({ type: "send", text: "oi" }));
+  ws.send(JSON.stringify({ type: "desconhecido", text: "oi" }));
   await delay(50);
   assert.deepEqual(messages.at(-1), { type: "error", code: "unsupported_message" });
   assert.equal(ws.readyState, WebSocket.OPEN);

@@ -145,11 +145,15 @@ app.use((err, req, res, next) => {
 
 // Servidor HTTP explícito para que o WebSocket do chat compartilhe a mesma porta.
 const server = http.createServer(app);
+const chatAuthenticator = chatConfigured ? createDiscordAuthenticator({ applicationId: clientId, botToken }) : null;
 attachChat(server, {
   discordClientId: clientId,
   // Sem configuração completa, mantém o autenticador padrão, que recusa todas as conexões.
-  ...(chatConfigured && {
-    authenticate: createDiscordAuthenticator({ applicationId: clientId, botToken }),
+  ...(chatAuthenticator && {
+    authenticate: chatAuthenticator,
+    // Revalidação periódica dos membros de cada sala, sempre com consulta nova ao Discord.
+    getMembers: async (instanceId) =>
+      (await chatAuthenticator.instances.getSnapshot(instanceId, { fresh: true })).users,
   }),
 });
 

@@ -43,7 +43,9 @@ export function createInstanceVerifier({
       return { users: new Set(result.body.users), expiresAt: now() + ttlMs };
     }
 
-    if (result.status === 404) {
+    // 404: instância inexistente ou encerrada. 400: o Discord não reconhece o formato do id.
+    // Nos dois casos não adianta tentar de novo, e não há o que registrar em log.
+    if (result.status === 404 || result.status === 400) {
       throw new ChatCloseError(CloseCode.FORBIDDEN, "instance_not_found");
     }
 

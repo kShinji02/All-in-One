@@ -39,6 +39,24 @@ export const INSTANCE_CACHE_MAX_ENTRIES = 500;
 /** Caracteres aceitos no instanceId antes de consultá-lo (impede injeção no caminho da URL). */
 export const INSTANCE_ID_PATTERN = /^[A-Za-z0-9-]+$/;
 
+/** Etapa 3 — salas e mensagens. */
+export const MAX_MESSAGE_LENGTH = 500; // em code points, após normalização
+export const MAX_NONCE_LENGTH = 64;
+export const HISTORY_LIMIT = 100; // mensagens por sala (buffer circular)
+export const EMPTY_ROOM_TTL_MS = 10 * 60_000; // sala vazia é removida após 10 min
+
+/** Envio: 5 mensagens por usuário a cada 10 s (todas as conexões do usuário somadas). */
+export const MESSAGE_RATE_LIMIT = Object.freeze({ limit: 5, windowMs: 10_000 });
+
+/** Proteção contra inundação: qualquer frame conta, por conexão. Acima disso, a conexão é encerrada. */
+export const FRAME_RATE_LIMIT = Object.freeze({ limit: 30, windowMs: 10_000 });
+
+export const MAX_CONNECTIONS_PER_USER = 3;
+export const MAX_CONNECTIONS_PER_ROOM = 50;
+
+/** Revalidação periódica dos membros de cada sala (quem saiu da Activity perde o acesso). */
+export const MEMBERSHIP_REVALIDATE_MS = 60_000;
+
 /**
  * Códigos de fechamento. 4000–4999 são da aplicação (RFC 6455); 1011 e 1013
  * são códigos padrão. Serão documentados em docs/CHAT-PROTOCOL.md (Etapa 6).
@@ -48,6 +66,8 @@ export const CloseCode = Object.freeze({
   UNAUTHORIZED: 4001,
   FORBIDDEN: 4003,
   AUTH_TIMEOUT: 4008,
+  /** Abuso: frames demais, conexões demais por usuário ou sala cheia. */
+  RATE_LIMITED: 4029,
   /** Falha de configuração do servidor (ex.: DISCORD_BOT_TOKEN recusado). */
   INTERNAL_ERROR: 1011,
   /** Discord indisponível, lento ou limitando requisições; o cliente pode tentar de novo. */
