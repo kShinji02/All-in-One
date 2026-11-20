@@ -232,7 +232,9 @@ function handleConnection(ws, context) {
 function joinRoom(ws, session, { rooms, userConnections }) {
   userConnections.set(session.user.id, (userConnections.get(session.user.id) ?? 0) + 1);
   session.joined = true;
-  return rooms.join(session.instanceId, ws);
+  rooms.join(session.instanceId, ws);
+  // Histórico com o nonce apenas nas mensagens do próprio usuário.
+  return rooms.historyFor(session.instanceId, session.user.id);
 }
 
 function leaveRoom(ws, session, { rooms, userConnections }) {
@@ -249,6 +251,14 @@ function handleSend(ws, session, frame, { rooms, messageLimiter, now }) {
 
   if (!parsed.ok) return send(ws, withNonce({ type: "error", code: parsed.code }, parsed.nonce));
 
+  // Idempotência: o mesmo autor reenviando o mesmo nonce recebe a mensagem original,
+  // só nesta conexão. Nada é retransmitido à sala e o limite de envio não é consumido.
+  // A chave inclui o autor, então usuários diferentes nunca compartilham um nonce.
+  if (parsed.nonce) {
+    const original = rooms.findByNonce(session.instanceId, session.user.id, parsed.nonce);
+    if (original) return send(ws, { type: "message", message: original, nonce: parsed.nonce });
+  }
+
   // Limite por usuário (soma todas as conexões dele).
   const limit = messageLimiter.hit(session.user.id);
   if (!limit.allowed) {
@@ -256,7 +266,7 @@ function handleSend(ws, session, frame, { rooms, messageLimiter, now }) {
   }
 
   const message = createMessage(session.user, parsed.text, now);
-  rooms.append(session.instanceId, message);
+  rooms.append(session.instanceId, message, parsed.nonce);
 
   // Entrega só aos clientes da MESMA sala. O nonce volta apenas para quem enviou.
   for (const client of rooms.clients(session.instanceId)) {

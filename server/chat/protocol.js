@@ -8,13 +8,20 @@ import { MAX_MESSAGE_LENGTH, MAX_NONCE_LENGTH } from "./config.js";
  *   { type: "send", text: string, nonce?: string }
  *
  * Servidor → cliente:
- *   { type: "history", messages: ChatMessage[] }            logo após o ready
- *   { type: "message", message: ChatMessage, nonce? }       nonce só para quem enviou
+ *   { type: "history", messages: ChatMessage[] }            logo após o ready; as mensagens
+ *                                                           do PRÓPRIO usuário trazem `nonce`
+ *   { type: "message", message: ChatMessage, nonce? }       nonce só para a conexão que enviou
  *   { type: "rate_limited", retryAfterMs, nonce? }
  *   { type: "error", code, nonce? }
  *
  * ChatMessage = { id, author: { id, username, displayName, avatarUrl }, text, createdAt }
  * O autor é sempre o usuário autenticado pelo servidor; o cliente nunca o informa.
+ *
+ * Idempotência (4.1): reenviar { type:"send", nonce } já usado pelo MESMO autor na
+ * MESMA sala devolve só a esta conexão a mensagem original
+ * ({ type:"message", message, nonce }), sem retransmitir à sala nem consumir o
+ * limite de envio. O texto do reenvio é ignorado. O nonce vale enquanto a mensagem
+ * estiver no histórico (100 mensagens) e a sala existir.
  */
 
 // Controles C0/C1 (exceto \n, tratado à parte) e caracteres de direção bidi,
