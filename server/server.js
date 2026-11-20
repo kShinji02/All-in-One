@@ -1,6 +1,8 @@
+import http from "node:http";
 import express from "express";
 import dotenv from "dotenv";
 import fetch from "node-fetch";
+import { attachChat } from "./chat/index.js";
 dotenv.config({ path: "../.env" });
 
 const app = express();
@@ -128,6 +130,10 @@ app.use((err, req, res, next) => {
   res.status(500).send({ error: "internal_error", message: "Erro interno do servidor." });
 });
 
-app.listen(port, () => {
+// Servidor HTTP explícito para que o WebSocket do chat compartilhe a mesma porta.
+const server = http.createServer(app);
+attachChat(server, { discordClientId: clientId });
+
+server.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}`);
 });
