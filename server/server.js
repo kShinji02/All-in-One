@@ -3,6 +3,7 @@ import express from "express";
 import dotenv from "dotenv";
 import fetch from "node-fetch";
 import { attachChat } from "./chat/index.js";
+import { createDiscordAuthenticator } from "./chat/authenticator.js";
 dotenv.config({ path: "../.env" });
 
 const app = express();
@@ -12,6 +13,7 @@ const port = 3001;
 const PLACEHOLDERS = new Set([
   "YOUR_DISCORD_CLIENT_ID_HERE",
   "YOUR_DISCORD_CLIENT_SECRET",
+  "YOUR_DISCORD_BOT_TOKEN",
 ]);
 
 function readEnv(name) {
@@ -35,12 +37,23 @@ if (missingEnv.length > 0) {
   );
 }
 
+// Token de bot da aplicação: usado SOMENTE no servidor para validar instâncias
+// (GET /applications/{id}/activity-instances/{instance_id}).
+const botToken = readEnv("DISCORD_BOT_TOKEN");
+const chatConfigured = Boolean(clientId && botToken);
+if (!chatConfigured) {
+  console.warn(
+    "[config] Chat indisponível: defina VITE_DISCORD_CLIENT_ID e DISCORD_BOT_TOKEN no .env. " +
+      "As conexões em /api/chat serão recusadas (4001 auth_unavailable).",
+  );
+}
+
 // Allow express to parse JSON bodies
 app.use(express.json());
 
 // Verificação de disponibilidade. Não revela valores de configuração.
 app.get("/api/health", (req, res) => {
-  res.send({ ok: true, oauthConfigured: missingEnv.length === 0 });
+  res.send({ ok: true, oauthConfigured: missingEnv.length === 0, chatConfigured });
 });
 
 app.post("/api/token", async (req, res) => {
@@ -132,7 +145,13 @@ app.use((err, req, res, next) => {
 
 // Servidor HTTP explícito para que o WebSocket do chat compartilhe a mesma porta.
 const server = http.createServer(app);
-attachChat(server, { discordClientId: clientId });
+attachChat(server, {
+  discordClientId: clientId,
+  // Sem configuração completa, mantém o autenticador padrão, que recusa todas as conexões.
+  ...(chatConfigured && {
+    authenticate: createDiscordAuthenticator({ applicationId: clientId, botToken }),
+  }),
+});
 
 server.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}`);
