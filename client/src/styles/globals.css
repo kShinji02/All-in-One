@@ -1,5 +1,9 @@
 @import 'tailwindcss';
 
+/* Os testes (client/test) não fazem parte da interface: sem esta exclusão, o
+ * Tailwind lê os arquivos de teste e gera classes extras no CSS de produção. */
+@source not "../../test";
+
 /* ------------------------------------------------------------------
  * Design tokens — All-in-One
  * Preto/grafite como base, roxo neon e azul elétrico como acentos.
