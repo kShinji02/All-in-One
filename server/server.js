@@ -97,15 +97,33 @@ app.post("/api/token", async (req, res) => {
   res.send({ access_token: data.access_token });
 });
 
-// Erros não tratados (ex.: JSON malformado) respondem em JSON, sem stack trace.
-// eslint-disable-next-line no-unused-vars
+// Erros não tratados respondem em JSON, sem stack trace, preservando o status
+// HTTP definido pelo body-parser (400, 413, 415...). Demais erros viram 500.
 app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+
   if (err?.type === "entity.parse.failed") {
     return res.status(400).send({
       error: "invalid_request",
       message: "O corpo da requisição não é um JSON válido.",
     });
   }
+
+  if (err?.type === "entity.too.large") {
+    return res.status(413).send({
+      error: "payload_too_large",
+      message: "O corpo da requisição excede o limite permitido.",
+    });
+  }
+
+  const status = Number(err?.status ?? err?.statusCode);
+  if (Number.isInteger(status) && status >= 400 && status < 500) {
+    return res.status(status).send({
+      error: "invalid_request",
+      message: "A requisição não pôde ser processada.",
+    });
+  }
+
   console.error("[server] Erro inesperado:", err?.message ?? err);
   res.status(500).send({ error: "internal_error", message: "Erro interno do servidor." });
 });
