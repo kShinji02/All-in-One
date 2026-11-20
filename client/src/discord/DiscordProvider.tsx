@@ -7,6 +7,12 @@ import type { LaunchContext } from '@/lib/launch-context';
 
 export interface DiscordContextValue {
   state: DiscordState;
+  /**
+   * true depois que o SDK concluiu ready() (handshake com o Discord).
+   * Independe do OAuth: continua true mesmo se authorize/token/authenticate falharem.
+   * Recursos que não exigem escopos (ex.: participantes) devem depender só disto.
+   */
+  sdkReady: boolean;
   /** Reinicia o fluxo após um erro. */
   retry: () => void;
 }
@@ -26,6 +32,7 @@ interface DiscordProviderProps {
 
 export function DiscordProvider({ launch, children }: DiscordProviderProps) {
   const [state, setState] = useState<DiscordState>(() => initialState(launch));
+  const [sdkReady, setSdkReady] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
   const canConnect = launch.isDiscord && env.isDiscordClientIdConfigured;
@@ -35,10 +42,15 @@ export function DiscordProvider({ launch, children }: DiscordProviderProps) {
     let active = true;
 
     startDiscordSession((step) => {
-      if (active) setState({ status: 'connecting', step });
+      if (!active) return;
+      // As etapas seguintes a 'ready' só começam depois que sdk.ready() terminou.
+      if (step !== 'ready') setSdkReady(true);
+      setState({ status: 'connecting', step });
     })
       .then((session) => {
-        if (active) setState({ status: 'ready', session });
+        if (!active) return;
+        setSdkReady(true);
+        setState({ status: 'ready', session });
       })
       .catch((error: unknown) => {
         if (!active) return;
@@ -64,6 +76,6 @@ export function DiscordProvider({ launch, children }: DiscordProviderProps) {
     setAttempt((n) => n + 1);
   }, []);
 
-  const value = useMemo(() => ({ state, retry }), [state, retry]);
+  const value = useMemo(() => ({ state, sdkReady, retry }), [state, sdkReady, retry]);
   return <DiscordContext.Provider value={value}>{children}</DiscordContext.Provider>;
 }

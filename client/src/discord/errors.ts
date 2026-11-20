@@ -8,14 +8,29 @@ export type DiscordErrorCode =
   | 'authenticate_failed';
 
 const messages: Record<DiscordErrorCode, string> = {
-  ready_timeout: 'O cliente do Discord não respondeu ao handshake a tempo.',
-  sdk_init_failed: 'Não foi possível inicializar o Embedded App SDK.',
+  // Timeout não significa recusa: só afirmamos que não houve resposta no prazo.
+  ready_timeout:
+    'O cliente do Discord não respondeu ao handshake a tempo. Recarregue a Activity; se persistir, confira se o Client ID do .env é o da aplicação aberta no Discord.',
+  sdk_init_failed: 'Não foi possível inicializar o Embedded App SDK. Recarregue a Activity pelo Discord.',
   authorize_failed: 'A autorização foi recusada ou cancelada no Discord.',
-  server_misconfigured: 'O servidor não tem as credenciais OAuth2 configuradas no .env.',
+  server_misconfigured:
+    'O servidor não tem as credenciais OAuth2 configuradas. Preencha o .env da raiz do projeto e reinicie o backend.',
   token_exchange_failed: 'O servidor não conseguiu trocar o código de autorização por um token.',
-  backend_unreachable: 'O servidor da aplicação (/api) não está respondendo.',
+  backend_unreachable:
+    'O servidor da aplicação (/api) não está respondendo. Inicie o backend com "npm run dev" na pasta server/ e tente novamente.',
   authenticate_failed: 'O Discord recusou a autenticação com o token obtido.',
 };
+
+/**
+ * Erros que acontecem antes ou durante o handshake. O SDK envia o handshake uma
+ * única vez, no construtor, e a instância é reaproveitada; repetir o fluxo não
+ * reenvia o handshake. Nesses casos a recuperação é recarregar a Activity.
+ */
+const RELOAD_REQUIRED: ReadonlySet<string> = new Set<DiscordErrorCode>(['ready_timeout', 'sdk_init_failed']);
+
+export function requiresReload(code: string): boolean {
+  return RELOAD_REQUIRED.has(code);
+}
 
 /** Erro de sessão com código estável e mensagem segura para exibir na interface. */
 export class DiscordSessionError extends Error {

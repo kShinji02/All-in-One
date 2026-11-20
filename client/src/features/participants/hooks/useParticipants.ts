@@ -15,8 +15,9 @@ import type { ParticipantsState } from '@/features/participants/types';
  * - O listener é removido ao desmontar ou ao tentar novamente.
  */
 export function useParticipants(): { state: ParticipantsState; retry: () => void } {
-  const { state: discord } = useDiscord();
-  const enabled = discord.status === 'ready';
+  // A API de participantes não exige escopos OAuth: basta o handshake (ready) do SDK.
+  // Assim a lista funciona mesmo se o OAuth, a troca de token ou o Express falharem.
+  const { sdkReady: enabled } = useDiscord();
 
   const [state, setState] = useState<ParticipantsState>({ status: enabled ? 'loading' : 'inactive' });
   const [attempt, setAttempt] = useState(0);

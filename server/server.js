@@ -4,7 +4,8 @@ import dotenv from "dotenv";
 import fetch from "node-fetch";
 import { attachChat } from "./chat/index.js";
 import { createDiscordAuthenticator } from "./chat/authenticator.js";
-dotenv.config({ path: "../.env" });
+import { ENV_PATH } from "./env-path.js";
+dotenv.config({ path: ENV_PATH });
 
 const app = express();
 const port = 3001;

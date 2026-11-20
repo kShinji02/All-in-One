@@ -1,10 +1,15 @@
-import { CircleAlert, MonitorOff, RotateCcw, Settings2 } from 'lucide-react';
+import { CircleAlert, MonitorOff, RefreshCw, RotateCcw, Settings2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { GlassPanel } from '@/components/ui/GlassPanel';
 import { StatusPill } from '@/components/ui/StatusPill';
+import { requiresReload } from '@/discord/errors';
 import { useDiscord } from '@/discord/useDiscord';
+import { reloadPage } from '@/lib/reload-page';
 import { ConnectionProgress } from '@/features/session/components/ConnectionProgress';
 import { SessionDetails } from '@/features/session/components/SessionDetails';
+
+const actionButtonClass =
+  'inline-flex items-center gap-2 rounded-xl border border-electric-400/30 bg-electric-500/10 px-4 py-2 text-sm font-medium text-electric-300 transition hover:border-electric-400/60 hover:bg-electric-500/20 active:scale-[0.98]';
 
 /** Painel com o estado da conexão com o Discord e os dados da sessão autenticada. */
 export function ConnectionPanel() {
@@ -65,14 +70,19 @@ export function ConnectionPanel() {
               <code className="font-mono text-xs text-graphite-400">{state.code}</code>
             )}
           </Notice>
-          <button
-            type="button"
-            onClick={retry}
-            className="inline-flex items-center gap-2 rounded-xl border border-electric-400/30 bg-electric-500/10 px-4 py-2 text-sm font-medium text-electric-300 transition hover:border-electric-400/60 hover:bg-electric-500/20 active:scale-[0.98]"
-          >
-            <RotateCcw className="size-4" aria-hidden="true" />
-            Tentar novamente
-          </button>
+          {/* O SDK só envia o handshake no construtor: sem handshake concluído, repetir o fluxo
+              na mesma instância não adianta, então o botão recarrega a Activity. */}
+          {requiresReload(state.code) ? (
+            <button type="button" onClick={reloadPage} className={actionButtonClass}>
+              <RefreshCw className="size-4" aria-hidden="true" />
+              Recarregar Activity
+            </button>
+          ) : (
+            <button type="button" onClick={retry} className={actionButtonClass}>
+              <RotateCcw className="size-4" aria-hidden="true" />
+              Tentar novamente
+            </button>
+          )}
         </div>
       )}
     </GlassPanel>

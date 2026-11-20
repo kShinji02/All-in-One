@@ -2,7 +2,7 @@ import { useMemo, type ReactNode } from 'react';
 import { CircleAlert, RotateCcw, UserRoundX, Users } from 'lucide-react';
 import { GlassPanel } from '@/components/ui/GlassPanel';
 import { StatusPill } from '@/components/ui/StatusPill';
-import type { DiscordParticipant } from '@/discord/types';
+import type { DiscordParticipant, DiscordState } from '@/discord/types';
 import { useDiscord } from '@/discord/useDiscord';
 import { ParticipantItem } from '@/features/participants/components/ParticipantItem';
 import { ParticipantsSkeleton } from '@/features/participants/components/ParticipantsSkeleton';
@@ -52,19 +52,25 @@ export function ParticipantsView() {
           </StatusPill>
         ) : state.status === 'loading' ? (
           <StatusPill tone="neon">Carregando</StatusPill>
-        ) : state.status === 'error' ? (
+        ) : state.status === 'error' || (state.status === 'inactive' && discord.status === 'error') ? (
           <StatusPill tone="warn">Erro</StatusPill>
+        ) : state.status === 'inactive' && discord.status === 'connecting' ? (
+          <StatusPill tone="neon">Conectando</StatusPill>
         ) : (
           <StatusPill tone="neutral">Inativo</StatusPill>
         )}
       </div>
 
-      {state.status === 'inactive' && (
-        <Notice icon={<Users className="size-5" />} title="Aguardando a sessão do Discord">
-          {discord.status === 'connecting'
-            ? 'A lista aparece assim que a autenticação terminar.'
-            : 'A lista de participantes fica disponível quando a Activity é aberta e autenticada no Discord.'}
-        </Notice>
+      {state.status === 'inactive' && <InactiveNotice discord={discord} />}
+
+      {/* A lista já funciona (SDK pronto), mas a autenticação falhou: explica a ausência do selo "Você". */}
+      {state.status !== 'inactive' && discord.status === 'error' && (
+        <div className="mb-4 rounded-xl border border-signal-warn/20 bg-signal-warn/[0.06] px-3.5 py-2.5" role="status">
+          <p className="text-xs leading-relaxed text-graphite-300">
+            <span className="font-medium text-signal-warn">Autenticação incompleta.</span> A lista é atualizada
+            normalmente, mas você não é identificado até autenticar. {discord.message}
+          </p>
+        </div>
       )}
 
       {state.status === 'loading' && <ParticipantsSkeleton />}
@@ -108,6 +114,37 @@ export function ParticipantsView() {
       </p>
     </GlassPanel>
   );
+}
+
+/** Explica por que a lista ainda não está ativa, de acordo com o estado real do SDK. */
+function InactiveNotice({ discord }: { discord: DiscordState }) {
+  switch (discord.status) {
+    case 'connecting':
+      return (
+        <Notice icon={<Users className="size-5" />} title="Conectando ao Discord">
+          A lista aparece assim que o SDK concluir o handshake.
+        </Notice>
+      );
+    case 'error':
+      return (
+        <Notice icon={<CircleAlert className="size-5 text-signal-warn" />} title="Não foi possível conectar ao Discord">
+          {discord.message}
+          <code className="mt-1 block font-mono text-xs break-all text-graphite-400">{discord.code}</code>
+        </Notice>
+      );
+    case 'misconfigured':
+      return (
+        <Notice icon={<CircleAlert className="size-5 text-signal-warn" />} title="Client ID não configurado">
+          Sem o Client ID, o SDK do Discord não é iniciado e a lista não pode ser carregada.
+        </Notice>
+      );
+    default:
+      return (
+        <Notice icon={<Users className="size-5" />} title="Fora do Discord">
+          A lista de participantes fica disponível quando a Activity é aberta pelo Discord.
+        </Notice>
+      );
+  }
 }
 
 function Notice({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
