@@ -1,3 +1,4 @@
+import { ChatView } from '@/features/chat/ChatView';
 import { EnvironmentPanel } from '@/features/home/components/EnvironmentPanel';
 import { ModuleCard } from '@/features/home/components/ModuleCard';
 import { featureModules } from '@/features/registry';
@@ -28,9 +29,13 @@ export function HomeView({ launch }: HomeViewProps) {
         <EnvironmentPanel launch={launch} />
       </section>
 
-      <div className="grid items-start gap-6 lg:grid-cols-2">
-        <ConnectionPanel />
-        <ParticipantsView />
+      {/* Área principal: chat com a maior parte do espaço; participantes e sessão ao lado. */}
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)]">
+        <ChatView />
+        <div className="flex min-w-0 flex-col gap-6">
+          <ParticipantsView />
+          <ConnectionPanel />
+        </div>
       </div>
 
       <section aria-labelledby="modules-heading">

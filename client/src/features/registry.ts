@@ -25,7 +25,7 @@ export const featureModules: readonly FeatureModule[] = [
     name: 'Chat',
     description: 'Conversa em tempo real entre os participantes da atividade.',
     icon: MessageSquare,
-    status: 'planned',
+    status: 'available',
     accent: 'neon',
   },
   {
