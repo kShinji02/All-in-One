@@ -1,17 +1,24 @@
-import { ChatView } from '@/features/chat/ChatView';
+import { FeatureBoundary } from '@/components/ui/FeatureBoundary';
 import { EnvironmentPanel } from '@/features/home/components/EnvironmentPanel';
 import { ModuleCard } from '@/features/home/components/ModuleCard';
-import { featureModules } from '@/features/registry';
+import { featureModules, modulesInSlot, type FeatureModule, type HomeSlot } from '@/features/registry';
 import { ConnectionPanel } from '@/features/session/ConnectionPanel';
-import { ParticipantsView } from '@/features/participants/ParticipantsView';
 import type { LaunchContext } from '@/lib/launch-context';
 
 interface HomeViewProps {
   launch: LaunchContext;
+  /** Registro usado pela Home (injetável nos testes). */
+  modules?: readonly FeatureModule[];
 }
 
-/** Tela inicial: apresentação, diagnóstico do ambiente e roteiro de módulos. */
-export function HomeView({ launch }: HomeViewProps) {
+/**
+ * Tela inicial: apresentação e diagnóstico, área principal dos módulos e roteiro.
+ *
+ * Os módulos disponíveis vêm do registro (features/registry.ts): `main` recebe a maior
+ * parte do espaço e `aside` fica na coluna lateral (empilhados no celular, nessa ordem).
+ * Cada painel fica num FeatureBoundary: a falha de um não derruba os outros.
+ */
+export function HomeView({ launch, modules = featureModules }: HomeViewProps) {
   return (
     <div className="flex flex-col gap-10 sm:gap-14">
       <section className="grid items-center gap-8 lg:grid-cols-[1.25fr_1fr] lg:gap-12">
@@ -26,15 +33,20 @@ export function HomeView({ launch }: HomeViewProps) {
           </p>
         </div>
 
-        <EnvironmentPanel launch={launch} />
+        <FeatureBoundary name="Ambiente">
+          <EnvironmentPanel launch={launch} />
+        </FeatureBoundary>
       </section>
 
-      {/* Área principal: chat com a maior parte do espaço; participantes e sessão ao lado. */}
+      {/* Área principal: módulos "main" com a maior parte do espaço; "aside" e a sessão ao lado. */}
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)]">
-        <ChatView />
+        <SlotModules slot="main" modules={modules} />
         <div className="flex min-w-0 flex-col gap-6">
-          <ParticipantsView />
-          <ConnectionPanel />
+          <SlotModules slot="aside" modules={modules} />
+          {/* A sessão é a infraestrutura dos módulos (SDK + OAuth), não um módulo do roteiro. */}
+          <FeatureBoundary name="Sessão Discord">
+            <ConnectionPanel />
+          </FeatureBoundary>
         </div>
       </div>
 
@@ -46,11 +58,23 @@ export function HomeView({ launch }: HomeViewProps) {
           <span className="font-mono text-[11px] tracking-wide text-graphite-400 uppercase">Roteiro</span>
         </div>
         <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {featureModules.map((module, index) => (
+          {modules.map((module, index) => (
             <ModuleCard key={module.id} module={module} index={index} />
           ))}
         </ul>
       </section>
     </div>
+  );
+}
+
+function SlotModules({ slot, modules }: { slot: HomeSlot; modules: readonly FeatureModule[] }) {
+  return (
+    <>
+      {modulesInSlot(slot, modules).map(({ id, name, View }) => (
+        <FeatureBoundary key={id} name={name}>
+          <View />
+        </FeatureBoundary>
+      ))}
+    </>
   );
 }
