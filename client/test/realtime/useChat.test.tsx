@@ -7,7 +7,7 @@ import { ChatConnectionProvider } from '@/realtime/ChatConnectionProvider';
 import { createMessageStore, type MessageStore } from '@/realtime/message-store';
 import { useChat } from '@/realtime/useChat';
 import { useChatConnection } from '@/realtime/useChatConnection';
-import { acceptConnection, FakeSocket, SELF } from './fake-socket';
+import { acceptConnection, FakeNetwork, FakeSocket, SELF } from './fake-socket';
 
 /*
  * useChat + ChatConnectionProvider + ChatConnection + message-store REAIS.
@@ -397,5 +397,51 @@ describe('useChat — defesa contra eventos tardios da sessão antiga', () => {
     expect(frames).toHaveLength(framesBefore); // assinantes não recebem frames da sessão antiga
     expect(newSocket.sent).toHaveLength(1); // só o auth: nada enviado com as credenciais novas
     off();
+  });
+});
+
+describe('useChat — perda de internet (provider liga rede e recycle)', () => {
+  it('prazo da confirmação estourado: o provider recicla a conexão desta sessão', async () => {
+    const { result } = await startReady();
+    const options = vi.mocked(createMessageStore).mock.calls[0]![0];
+    expect(options.onAckTimeout).toBeTypeOf('function');
+    const socket = FakeSocket.last;
+    let recycled = false;
+    await act(async () => {
+      recycled = options.onAckTimeout!();
+    });
+    expect(recycled).toBe(true);
+    expect(socket.closeCalls).toEqual([{ code: 4902, reason: 'stalled' }]);
+    expect(result.current.connectionState.status).toBe('reconnecting');
+  });
+
+  it('sem internet: estado offline no hook, pendente preservada, e reconexão quando a rede volta', async () => {
+    const network = new FakeNetwork();
+    fake.discord = sessionReady('i-1');
+    fake.token = 'token-1';
+    const { result } = renderHook(() => useChat(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <StrictMode>
+          <ChatConnectionProvider url="ws://test/api/chat" createSocket={(url) => new FakeSocket(url)} random={() => 0} network={network}>
+            {children}
+          </ChatConnectionProvider>
+        </StrictMode>
+      ),
+    });
+    await flush();
+    await server(() => acceptConnection(FakeSocket.last));
+    expect(network.listenerCount).toBe(1); // StrictMode: um ouvinte só
+
+    await act(async () => network.set(false));
+    expect(result.current.connectionState.status).toBe('ready'); // o evento sozinho não derruba
+    await act(async () => FakeSocket.last.networkFailure()); // a queda real
+    expect(result.current).toMatchObject({ connectionState: { status: 'offline' }, isReady: false, isLoading: true, error: null });
+    await act(async () => void result.current.sendMessage('offline'));
+    expect(texts(result)).toEqual([['offline', 'pending']]);
+
+    await act(async () => network.set(true));
+    await server(() => acceptConnection(FakeSocket.last));
+    expect(result.current.isReady).toBe(true);
+    expect(sentFrames(FakeSocket.last)).toEqual([{ type: 'send', text: 'offline', nonce: expect.any(String) }]);
   });
 });

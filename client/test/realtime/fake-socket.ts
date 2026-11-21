@@ -113,3 +113,28 @@ export function acceptConnection(socket: FakeSocket, history: unknown[] = []) {
   socket.serverSend(readyFrame());
   socket.serverSend({ type: 'history', messages: history });
 }
+
+/** Rede do aparelho controlada pelo teste (navigator.onLine + online/offline). */
+export class FakeNetwork {
+  online = true;
+  private readonly listeners = new Set<(online: boolean) => void>();
+
+  isOnline = () => this.online;
+
+  subscribe = (listener: (online: boolean) => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  get listenerCount() {
+    return this.listeners.size;
+  }
+
+  /** O navegador detecta a mudança e dispara o evento. */
+  set(online: boolean) {
+    this.online = online;
+    for (const listener of [...this.listeners]) listener(online);
+  }
+}

@@ -7,6 +7,7 @@ import {
   type ChatConnection,
   type ChatConnectionState,
   type ChatCredentials,
+  type NetworkMonitor,
   type Timers,
   type WebSocketLike,
 } from '@/realtime/chat-connection';
@@ -48,6 +49,7 @@ interface ChatConnectionProviderProps {
   createSocket?: (url: string) => WebSocketLike;
   timers?: Timers;
   random?: () => number;
+  network?: NetworkMonitor;
 }
 
 /**
@@ -60,7 +62,7 @@ interface ChatConnectionProviderProps {
  *   store envia só por ela. Trocar de sessão descarta as duas juntas.
  * - É independente da lista de participantes: não altera nem lê o estado dela.
  */
-export function ChatConnectionProvider({ children, url, createSocket, timers, random }: ChatConnectionProviderProps) {
+export function ChatConnectionProvider({ children, url, createSocket, timers, random, network }: ChatConnectionProviderProps) {
   const { state: discord } = useDiscord();
   const accessToken = discord.status === 'ready' ? getAccessToken() : null;
   const instanceId = discord.status === 'ready' ? discord.session.context.instanceId : null;
@@ -76,8 +78,8 @@ export function ChatConnectionProvider({ children, url, createSocket, timers, ra
   const listenersRef = useRef(new Set<ChatFrameListener>());
 
   // As injeções são lidas uma vez por conexão; mudá-las não deve reconectar.
-  const injected = useRef({ url, createSocket, timers, random });
-  injected.current = { url, createSocket, timers, random };
+  const injected = useRef({ url, createSocket, timers, random, network });
+  injected.current = { url, createSocket, timers, random, network };
 
   useEffect(() => {
     setChat(NO_SESSION);
@@ -95,6 +97,8 @@ export function ChatConnectionProvider({ children, url, createSocket, timers, ra
       // A store só envia pela conexão desta sessão (nunca com credenciais de outra).
       const sessionStore = createMessageStore({
         transport: { send: (text, nonce) => connection?.send(text, nonce) ?? false },
+        // Sem confirmação no prazo com a sala "aberta": a conexão está morta; recicla.
+        onAckTimeout: () => connection?.recycle() ?? false,
         timers: deps.timers,
       });
       /** Atualiza o estado React só se ele ainda for desta sessão. */
@@ -107,6 +111,7 @@ export function ChatConnectionProvider({ children, url, createSocket, timers, ra
         createSocket: deps.createSocket,
         timers: deps.timers,
         random: deps.random,
+        network: deps.network,
         onStateChange: (next) => {
           if (!active) return;
           sessionStore.handleConnectionState(next);

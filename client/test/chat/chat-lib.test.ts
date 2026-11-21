@@ -125,6 +125,11 @@ describe('describeChatStatus', () => {
     expect(view).toMatchObject({ label: 'Reconectando', banner: { action: { kind: 'reconnect' } }, composerDisabledReason: null });
   });
 
+  it('sem internet: aviso "Sem internet", "Tentar agora" e campo habilitado (mensagens ficam aguardando)', () => {
+    const view = describeChatStatus({ ...base, connectionState: { status: 'offline', lastClose: null } });
+    expect(view).toMatchObject({ label: 'Sem internet', tone: 'warn', banner: { title: 'Sem internet', action: { kind: 'reconnect' } }, composerDisabledReason: null });
+  });
+
   it.each([
     ['session_expired', 'reload', true],
     ['left_instance', 'reload', true],

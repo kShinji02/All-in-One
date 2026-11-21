@@ -7,6 +7,7 @@ import {
   RECONNECT_BASE_DELAY_MS,
   RECONNECT_MAX_DELAY_MS,
   reconnectDelay,
+  STABLE_CONNECTION_MS,
   type ChatConnectionOptions,
   type ChatConnectionState,
 } from '@/realtime/chat-connection';
@@ -196,7 +197,7 @@ describe('falhas e reconexão', () => {
     expect(states.filter((s) => s.status === 'connecting').map((s) => (s as { attempt: number }).attempt)).toEqual([1, 2, 3, 4, 5]);
   });
 
-  it('o backoff volta ao início depois de um "ready"', () => {
+  it('o backoff volta ao início depois de uma sala ESTÁVEL (aberta por STABLE_CONNECTION_MS)', () => {
     const { connection } = setup();
     connection.start();
     FakeSocket.last.networkFailure();
@@ -204,9 +205,22 @@ describe('falhas e reconexão', () => {
     FakeSocket.last.networkFailure();
     vi.advanceTimersByTime(1_000);
     acceptConnection(FakeSocket.last);
+    vi.advanceTimersByTime(STABLE_CONNECTION_MS);
     FakeSocket.last.serverClose(1001, ''); // servidor reiniciando
     const s = connection.getState();
     expect(s.status === 'reconnecting' && s.delayMs).toBe(500);
+  });
+
+  it('uma sala que cai antes de ficar estável NÃO zera o backoff', () => {
+    const { connection } = setup();
+    connection.start();
+    FakeSocket.last.networkFailure();
+    vi.advanceTimersByTime(500);
+    acceptConnection(FakeSocket.last);
+    vi.advanceTimersByTime(STABLE_CONNECTION_MS - 1);
+    FakeSocket.last.serverClose(1001, '');
+    const s = connection.getState();
+    expect(s.status === 'reconnecting' && s.delayMs).toBe(1_000);
   });
 
   it('abrir o socket sem chegar ao "ready" não zera o backoff (ex.: auth_timeout em laço)', () => {

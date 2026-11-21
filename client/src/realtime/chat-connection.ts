@@ -30,9 +30,31 @@ export const MAX_RECONNECT_ATTEMPTS = 8;
  * presas sem resposta (o servidor já encerra autenticações lentas em 5 s).
  */
 export const HANDSHAKE_TIMEOUT_MS = 15_000;
+/**
+ * Uma sala só conta como restabelecida depois de ficar aberta por este tempo. Antes
+ * disso, uma queda conta como tentativa falha: o backoff cresce e o limite vale.
+ * (Sem isso, conexões que caem logo após o "ready" zeravam o contador para sempre.)
+ */
+export const STABLE_CONNECTION_MS = 30_000;
+/** O evento "online" só zera o contador de tentativas uma vez por este intervalo. */
+export const ONLINE_RESET_COOLDOWN_MS = 60_000;
+/**
+ * Sem rede segundo o navegador, ainda tentamos de vez em quando: navigator.onLine pode
+ * estar errado no webview. Essas tentativas contam no limite.
+ */
+export const OFFLINE_PROBE_MS = 30_000;
+/**
+ * Um prazo que dispara muito depois do previsto indica app suspenso (segundo plano).
+ * Nesse caso o prazo é renovado uma vez em vez de encerrar a conexão.
+ */
+export const TIMER_DRIFT_TOLERANCE_MS = 5_000;
 
 /** Código usado quando o próprio cliente desiste do handshake (faixa 4000–4999 da aplicação). */
 const CLIENT_HANDSHAKE_TIMEOUT_CODE = 4900;
+/** O cliente fecha um socket que parou de responder (meio aberto). */
+const CLIENT_STALLED_CODE = 4902;
+/** Queda de rede vista pelo cliente (sem código do servidor). */
+const NETWORK_LOSS: CloseInfo = { code: 1006, reason: '', category: 'transient' };
 const NORMAL_CLOSURE = 1000;
 const WS_CONNECTING = 0;
 const WS_OPEN = 1;
@@ -72,6 +94,11 @@ export type ChatConnectionState =
   | { status: 'authenticating'; attempt: number }
   | { status: 'ready'; self: ChatAuthor }
   | { status: 'reconnecting'; attempt: number; delayMs: number; lastClose: CloseInfo }
+  /**
+   * Sem internet (o navegador informa navigator.onLine = false): nenhuma tentativa é
+   * feita nem contada. Quando a rede volta ("online"), reconecta na hora.
+   */
+  | { status: 'offline'; lastClose: CloseInfo | null }
   | { status: 'stopped'; reason: ChatStopReason; lastClose: CloseInfo | null };
 
 export interface CloseInfo {
@@ -102,6 +129,28 @@ export interface Timers {
   clearTimeout(handle: unknown): void;
 }
 
+/** Estado da rede do aparelho. Padrão: navigator.onLine + eventos online/offline. */
+export interface NetworkMonitor {
+  /** false só quando o navegador tem certeza de que não há rede. */
+  isOnline(): boolean;
+  subscribe(listener: (online: boolean) => void): () => void;
+}
+
+export const browserNetwork: NetworkMonitor = {
+  isOnline: () => typeof navigator === 'undefined' || navigator.onLine !== false,
+  subscribe(listener) {
+    if (typeof window === 'undefined') return () => undefined;
+    const online = () => listener(true);
+    const offline = () => listener(false);
+    window.addEventListener('online', online);
+    window.addEventListener('offline', offline);
+    return () => {
+      window.removeEventListener('online', online);
+      window.removeEventListener('offline', offline);
+    };
+  },
+};
+
 export interface ChatConnectionOptions {
   url: string;
   credentials: ChatCredentials;
@@ -113,13 +162,25 @@ export interface ChatConnectionOptions {
   createSocket?: (url: string) => WebSocketLike;
   timers?: Timers;
   random?: () => number;
+  network?: NetworkMonitor;
+  /** Relógio (detecta prazos atrasados pela suspensão do app). */
+  now?: () => number;
 }
 
 export interface ChatConnection {
   /** Abre a conexão. Chamadas repetidas enquanto há conexão ou tentativa agendada não fazem nada. */
   start(): void;
-  /** Reinicia depois de uma parada definitiva ou durante a espera de uma nova tentativa. */
+  /**
+   * Tentativa manual: depois de uma parada definitiva, durante a espera do backoff ou
+   * sem rede (nesse caso tenta mesmo assim: navigator.onLine pode estar errado).
+   */
   retry(): void;
+  /**
+   * A sala parece aberta, mas o servidor parou de responder (socket meio aberto, comum
+   * no celular quando a rede cai). Fecha o socket e reconecta pela política normal.
+   * Devolve false se não havia sala aberta para reciclar.
+   */
+  recycle(): boolean;
   /** Encerra tudo: fecha o socket, cancela timers e remove listeners. Irreversível. */
   dispose(): void;
   getState(): ChatConnectionState;
@@ -165,6 +226,8 @@ export function createChatConnection(options: ChatConnectionOptions): ChatConnec
     createSocket = (target) => new WebSocket(target),
     timers = defaultTimers,
     random = Math.random,
+    network = browserNetwork,
+    now = Date.now,
   } = options;
 
   let state: ChatConnectionState = { status: 'idle' };
@@ -172,9 +235,15 @@ export function createChatConnection(options: ChatConnectionOptions): ChatConnec
   let detachSocket: (() => void) | null = null;
   let reconnectTimer: unknown = null;
   let handshakeTimer: unknown = null;
-  /** Tentativas seguidas sem "ready" (zera quando a sala é aberta). */
+  /** Tentativas seguidas sem uma sala estável (zera após STABLE_CONNECTION_MS aberta). */
   let attempt = 0;
+  let stableTimer: unknown = null;
+  let probeTimer: unknown = null;
+  let lastOnlineReset = Number.NEGATIVE_INFINITY;
+  /** Último estado de rede visto (para distinguir transição real de evento repetido). */
+  let networkOnline = true;
   let disposed = false;
+  let unsubscribeNetwork: (() => void) | null = null;
 
   function setState(next: ChatConnectionState) {
     if (disposed) return;
@@ -196,9 +265,45 @@ export function createChatConnection(options: ChatConnectionOptions): ChatConnec
     handshakeTimer = null;
   }
 
+  function clearStable() {
+    clearTimer(stableTimer);
+    stableTimer = null;
+  }
+
+  function clearProbe() {
+    clearTimer(probeTimer);
+    probeTimer = null;
+  }
+
+  /**
+   * Prazo que tolera suspensão: se disparar mais de TIMER_DRIFT_TOLERANCE_MS atrasado
+   * (timers congelados com o app em segundo plano), renova a janela uma vez — os eventos
+   * do socket podem estar na fila logo atrás.
+   */
+  function deadline(ms: number, onExpire: () => void, store: (handle: unknown) => void) {
+    let extended = false;
+    const arm = () => {
+      const armedAt = now();
+      store(
+        timers.setTimeout(() => {
+          const late = now() - armedAt - ms;
+          if (!extended && late > TIMER_DRIFT_TOLERANCE_MS) {
+            extended = true;
+            arm();
+            return;
+          }
+          store(null);
+          onExpire();
+        }, ms),
+      );
+    };
+    arm();
+  }
+
   /** Desliga o socket atual: depois disso, nenhum evento dele altera o estado. */
   function releaseSocket(code: number, reason: string) {
     clearHandshake();
+    clearStable();
     const current = socket;
     socket = null;
     detachSocket?.();
@@ -208,8 +313,32 @@ export function createChatConnection(options: ChatConnectionOptions): ChatConnec
     }
   }
 
-  function open() {
+  /**
+   * Sem rede segundo o navegador: espera o evento "online", mas não confia só nele —
+   * a cada OFFLINE_PROBE_MS tenta mesmo assim, contando no limite de tentativas.
+   */
+  function goOffline(lastClose: CloseInfo | null) {
+    clearReconnect();
+    clearProbe();
+    if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+      setState({ status: 'stopped', reason: 'retries_exhausted', lastClose });
+      return;
+    }
+    setState({ status: 'offline', lastClose });
+    probeTimer = timers.setTimeout(() => {
+      probeTimer = null;
+      open({ force: true });
+    }, OFFLINE_PROBE_MS);
+  }
+
+  function open({ force = false }: { force?: boolean } = {}) {
     if (disposed || socket) return;
+    clearProbe();
+    if (!force && !network.isOnline()) {
+      networkOnline = false;
+      goOffline(state.status === 'reconnecting' || state.status === 'offline' ? state.lastClose : null);
+      return;
+    }
     attempt += 1;
     setState({ status: 'connecting', attempt });
 
@@ -239,7 +368,12 @@ export function createChatConnection(options: ChatConnectionOptions): ChatConnec
       const { frame } = parsed;
       if (frame.type === 'ready') {
         clearHandshake();
-        attempt = 0;
+        // O contador só zera se a sala continuar aberta (conexões que caem logo contam).
+        clearStable();
+        stableTimer = timers.setTimeout(() => {
+          stableTimer = null;
+          attempt = 0;
+        }, STABLE_CONNECTION_MS);
         setState({ status: 'ready', self: frame.self });
       } else if (state.status !== 'ready') {
         // Antes do "ready" o servidor não envia outros frames; algo fora de ordem é descartado.
@@ -268,13 +402,16 @@ export function createChatConnection(options: ChatConnectionOptions): ChatConnec
       ws.removeEventListener('close', onClose);
     };
 
-    handshakeTimer = timers.setTimeout(() => {
-      handshakeTimer = null;
-      if (socket !== ws) return;
-      releaseSocket(CLIENT_HANDSHAKE_TIMEOUT_CODE, 'handshake_timeout');
-      // Sem resposta do servidor no prazo: mesma política de uma queda de rede.
-      scheduleOrStop({ code: 1006, reason: '', category: 'transient' }, true);
-    }, HANDSHAKE_TIMEOUT_MS);
+    deadline(
+      HANDSHAKE_TIMEOUT_MS,
+      () => {
+        if (socket !== ws) return;
+        releaseSocket(CLIENT_HANDSHAKE_TIMEOUT_CODE, 'handshake_timeout');
+        // Sem resposta do servidor no prazo: mesma política de uma queda de rede.
+        scheduleOrStop(NETWORK_LOSS, true);
+      },
+      (handle) => (handshakeTimer = handle),
+    );
   }
 
   function handleClose(event: { code: number; reason: string }) {
@@ -287,6 +424,12 @@ export function createChatConnection(options: ChatConnectionOptions): ChatConnec
     if (disposed) return;
     if (!reconnect) {
       setState({ status: 'stopped', reason: lastClose.category as ChatStopReason, lastClose });
+      return;
+    }
+    // A queda veio da falta de rede: as tentativas esperam a rede voltar, sem gastar o limite.
+    if (!network.isOnline()) {
+      networkOnline = false;
+      goOffline(lastClose);
       return;
     }
     if (attempt >= MAX_RECONNECT_ATTEMPTS) {
@@ -303,23 +446,74 @@ export function createChatConnection(options: ChatConnectionOptions): ChatConnec
     }, delayMs);
   }
 
+  function onNetworkChange(online: boolean) {
+    if (disposed) return;
+    if (!online) {
+      // navigator.onLine não é prova: um socket vivo continua até falhar de fato (o
+      // fechamento, o prazo do handshake ou a falta de confirmação decidem).
+      // Só a espera do backoff é suspensa, para não gastar tentativas à toa.
+      networkOnline = false;
+      if (state.status === 'reconnecting') goOffline(state.lastClose);
+      return;
+    }
+    // Só uma transição real (sem rede → com rede) conta. Um "online" repetido com a rede
+    // já "online" não prova nada (o webview do Discord Mobile pode dispará-lo à toa).
+    const transitioned = !networkOnline;
+    networkOnline = true;
+    if (!transitioned) return;
+    const waiting = state.status === 'offline' || state.status === 'reconnecting';
+    const exhausted = state.status === 'stopped' && state.reason === 'retries_exhausted';
+    if (!waiting && !exhausted) return;
+    // A rede voltou: tenta já. O contador só zera uma vez por ONLINE_RESET_COOLDOWN_MS,
+    // para que uma rede instável (oscilando) não anule o limite de tentativas.
+    const t = now();
+    if (t - lastOnlineReset >= ONLINE_RESET_COOLDOWN_MS) {
+      lastOnlineReset = t;
+      attempt = 0;
+    } else if (exhausted) {
+      return;
+    }
+    clearReconnect();
+    open();
+  }
+
   return {
     start() {
       if (disposed || socket || reconnectTimer !== null || state.status === 'stopped') return;
+      if (!unsubscribeNetwork) {
+        networkOnline = network.isOnline();
+        unsubscribeNetwork = network.subscribe(onNetworkChange);
+      }
       open();
     },
 
     retry() {
       if (disposed) return;
-      if (state.status !== 'stopped' && state.status !== 'reconnecting') return;
+      if (state.status !== 'stopped' && state.status !== 'reconnecting' && state.status !== 'offline') return;
+      if (!unsubscribeNetwork) {
+        networkOnline = network.isOnline();
+        unsubscribeNetwork = network.subscribe(onNetworkChange);
+      }
       clearReconnect();
       attempt = 0;
-      open();
+      // Ação do usuário: tenta mesmo que navigator.onLine diga o contrário.
+      open({ force: true });
+    },
+
+    recycle() {
+      if (disposed || !socket || state.status !== 'ready') return false;
+      releaseSocket(CLIENT_STALLED_CODE, 'stalled');
+      scheduleOrStop(NETWORK_LOSS, true);
+      return true;
     },
 
     dispose() {
       if (disposed) return;
+      unsubscribeNetwork?.();
+      unsubscribeNetwork = null;
       clearReconnect();
+      clearProbe();
+      clearStable();
       releaseSocket(NORMAL_CLOSURE, '');
       state = { status: 'idle' };
       disposed = true;

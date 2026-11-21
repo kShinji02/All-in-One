@@ -2,7 +2,7 @@
 import http from 'node:http';
 import { once } from 'node:events';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi, type Mock } from 'vitest';
-import { createChatConnection, type ChatConnection, type WebSocketLike } from '@/realtime/chat-connection';
+import { createChatConnection, type ChatConnection, type NetworkMonitor, type WebSocketLike } from '@/realtime/chat-connection';
 import type { ChatMessage, ServerFrame } from '@/realtime/chat-protocol';
 import { createMessageStore, type ChatEntry, type MessageStore } from '@/realtime/message-store';
 
@@ -106,7 +106,11 @@ afterEach(async () => {
   await vi.waitFor(() => expect(chat.wss.clients.size).toBe(0));
 });
 
-function join(token: string, instanceId: string, { ackTimeoutMs }: { ackTimeoutMs?: number } = {}): Client {
+function join(
+  token: string,
+  instanceId: string,
+  { ackTimeoutMs, network, recycleOnAckTimeout = false }: { ackTimeoutMs?: number; network?: NetworkMonitor; recycleOnAckTimeout?: boolean } = {},
+): Client {
   const client = {} as Client;
   client.filter = null;
   client.loseSend = null;
@@ -114,12 +118,18 @@ function join(token: string, instanceId: string, { ackTimeoutMs }: { ackTimeoutM
     if (client.loseSend?.(text)) return true; // "entregue" ao socket, mas nunca chega
     return client.connection.send(text, nonce);
   });
-  client.store = createMessageStore({ transport: { send: (t, n) => client.sendSpy(t, n) }, ackTimeoutMs });
+  client.store = createMessageStore({
+    transport: { send: (t, n) => client.sendSpy(t, n) },
+    ackTimeoutMs,
+    // Como o ChatConnectionProvider liga (4.6+): sem confirmação no prazo → recicla a conexão.
+    onAckTimeout: recycleOnAckTimeout ? () => client.connection.recycle() : undefined,
+  });
   client.connection = createChatConnection({
     url,
     credentials: { accessToken: token, instanceId },
     createSocket: (target) => new NodeWebSocket(target, { origin: 'http://localhost:5173' }),
     random: () => 0,
+    network,
     onStateChange: (s) => client.store.handleConnectionState(s),
     onFrame: (f) => {
       if (client.filter && !client.filter(f)) return;
@@ -310,5 +320,84 @@ describe('store × servidor real', () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(b.list()).toEqual([]);
     expect(roomTexts(roomB)).toEqual([]);
+  });
+
+  /* ---------------- perda de internet (Discord Mobile) ---------------- */
+  class Network implements NetworkMonitor {
+    online = true;
+    private listeners = new Set<(online: boolean) => void>();
+    isOnline = () => this.online;
+    subscribe = (listener: (online: boolean) => void) => {
+      this.listeners.add(listener);
+      return () => void this.listeners.delete(listener);
+    };
+    set(online: boolean) {
+      this.online = online;
+      for (const l of [...this.listeners]) l(online);
+    }
+  }
+
+  it('internet cai, mensagem enviada offline, internet volta: reconecta, histórico e publicação única', async () => {
+    const room = newInstance();
+    const ana = newUser('Ana');
+    const bruno = newUser('Bruno');
+    const network = new Network();
+    const a = join(ana.token, room, { network, recycleOnAckTimeout: true });
+    const b = join(bruno.token, room);
+    await ready(a);
+    await ready(b);
+    b.store.send('antes da queda');
+    await until(() => expect(statuses(a)).toEqual([['antes da queda', 'sent']]));
+
+    network.set(false);
+    expect(a.connection.getState().status).toBe('ready'); // o evento sozinho não derruba
+    terminateSocketOf(ana.user.id); // a queda real: o socket morre
+    await until(() => expect(a.connection.getState().status).toBe('offline'));
+    a.store.send('escrita sem internet');
+    expect(statuses(a).at(-1)).toEqual(['escrita sem internet', 'pending']);
+    b.store.send('enquanto a Ana estava fora');
+    await until(() => expect(statuses(b)).toHaveLength(2));
+
+    network.set(true);
+    await ready(a);
+    await until(() =>
+      expect(statuses(a)).toEqual([
+        ['antes da queda', 'sent'],
+        ['enquanto a Ana estava fora', 'sent'], // recuperada pelo histórico
+        ['escrita sem internet', 'sent'],
+      ]),
+    );
+    await until(() => expect(statuses(b).map(([t]) => t)).toEqual(['antes da queda', 'enquanto a Ana estava fora', 'escrita sem internet']));
+    expect(roomTexts(room)).toEqual(['antes da queda', 'enquanto a Ana estava fora', 'escrita sem internet']);
+    expect(a.sendSpy).toHaveBeenCalledTimes(1); // nada foi enviado enquanto estava offline
+    expectUnique(a);
+    expectUnique(b);
+  });
+
+  it('socket meio aberto (o envio se perde sem aviso): o prazo recicla a conexão e o reenvio publica uma vez', async () => {
+    const room = newInstance();
+    const ana = newUser('Ana');
+    const bruno = newUser('Bruno');
+    const a = join(ana.token, room, { ackTimeoutMs: 300, recycleOnAckTimeout: true });
+    const b = join(bruno.token, room);
+    await ready(a);
+    await ready(b);
+
+    let lost = false;
+    a.loseSend = (text) => {
+      if (text !== 'no vazio' || lost) return false;
+      lost = true;
+      return true; // o frame "sai" do aparelho mas nunca chega ao servidor
+    };
+    a.store.send('no vazio');
+    await until(() => expect(a.connection.getState().status).not.toBe('ready'));
+    expect(statuses(a)).toEqual([['no vazio', 'pending']]); // nunca "failed: timeout"
+
+    await until(() => expect(statuses(a)).toEqual([['no vazio', 'sent']]));
+    const nonces = a.sendSpy.mock.calls.map((call) => call[1]);
+    expect(nonces).toHaveLength(2);
+    expect(new Set(nonces).size).toBe(1);
+    expect(roomTexts(room)).toEqual(['no vazio']);
+    await until(() => expect(statuses(b)).toEqual([['no vazio', 'sent']]));
   });
 });

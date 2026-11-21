@@ -33,6 +33,8 @@ import {
 export const MAX_SEND_ATTEMPTS = 3;
 /** Sem resposta do servidor nesse prazo, com a conexão aberta, o envio é dado como falho. */
 export const ACK_TIMEOUT_MS = 10_000;
+/** Prazo que dispara com este atraso (ou mais) indica app suspenso: renova uma vez. */
+export const ACK_DRIFT_TOLERANCE_MS = 5_000;
 /** Mensagens locais (pendentes + falhas) ao mesmo tempo. */
 export const MAX_OUTSTANDING = 20;
 
@@ -120,6 +122,13 @@ export interface MessageStoreOptions {
   now?: () => number;
   /** Prazo da confirmação com a conexão aberta (padrão ACK_TIMEOUT_MS). */
   ackTimeoutMs?: number;
+  /**
+   * Chamado quando o prazo da confirmação estoura com a sala aparentemente aberta.
+   * Devolve true se a conexão foi reciclada: a mensagem continua "pending" (resultado
+   * desconhecido) e o histórico da próxima conexão decide entre confirmar e reenviar com
+   * o mesmo nonce. Sem handler (ou false), a mensagem falha com "timeout".
+   */
+  onAckTimeout?: () => boolean;
 }
 
 /* ------------------------------------------------------------------ *
@@ -166,6 +175,7 @@ export function createMessageStore(options: MessageStoreOptions): MessageStore {
     timers = defaultTimers,
     now = Date.now,
     ackTimeoutMs = ACK_TIMEOUT_MS,
+    onAckTimeout,
   } = options;
 
   const confirmed = new Map<string, ConfirmedRecord>(); // id → registro
@@ -301,14 +311,29 @@ export function createMessageStore(options: MessageStoreOptions): MessageStore {
     if (!delivered) return; // continua pendente; a próxima abertura da sala tenta de novo
     record.attempts += 1;
     record.inFlight = true;
-    record.ackTimer = timers.setTimeout(() => {
-      record.ackTimer = null;
-      if (record.status === 'pending' && record.inFlight) {
-        fail(record, 'timeout', null, true);
-        emit();
-      }
-    }, ackTimeoutMs);
+    const armAck = (extended: boolean) => {
+      const armedAt = now();
+      record.ackTimer = timers.setTimeout(() => {
+        record.ackTimer = null;
+        if (record.status !== 'pending' || !record.inFlight) return;
+        // Disparou muito atrasado: o app estava suspenso; a confirmação pode estar na fila.
+        if (!extended && now() - armedAt - ackTimeoutMs > ACK_DRIFT_TOLERANCE_MS) {
+          armAck(true);
+          return;
+        }
+        onAckExpired(record);
+      }, ackTimeoutMs);
+    };
+    armAck(false);
     touchLocal(record);
+  }
+
+  function onAckExpired(record: LocalRecord) {
+    // Socket meio aberto (comum no celular): recicla a conexão em vez de desistir.
+    // A troca de estado da conexão (handleConnectionState) marca o envio como desconhecido.
+    if (onAckTimeout?.()) return;
+    fail(record, 'timeout', null, true);
+    emit();
   }
 
   /** Depois do histórico: reenvia o que não foi confirmado, dentro do limite de tentativas. */

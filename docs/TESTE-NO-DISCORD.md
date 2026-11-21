@@ -43,6 +43,14 @@ cd server && npm install && npm run dev      # http://localhost:3001
 cd client && npm install && npm run dev      # http://localhost:5173
 ```
 
+> **Testes no celular ou com queda de internet:** use `npm run dev:discord` no lugar de
+> `npm run dev` (mesma porta 5173, mesmo túnel). Ele gera o build de produção, serve com
+> `vite preview` e refaz o build a cada alteração (reabra a Activity para ver as mudanças).
+> Motivo: no `npm run dev`, o cliente do Vite recarrega a página inteira quando a rede volta
+> (o Discord Mobile mostra "Erro ao recarregar a atividade"), e qualquer WebSocket do Vite
+> preso no host da página bloqueia o WebSocket do chat (o navegador só abre um por vez por
+> host). Sem o cliente do Vite na página, a queda de rede afeta só o chat, que reconecta sozinho.
+
 ```bash
 cloudflared tunnel --url http://localhost:5173
 ```

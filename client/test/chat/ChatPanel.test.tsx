@@ -173,6 +173,20 @@ describe('ChatPanel — conexão', () => {
     expect(chat.reconnect).toHaveBeenCalledOnce();
   });
 
+  it('sem internet: histórico visível, aviso com "Tentar agora" e envio fica pending', async () => {
+    const chat = renderChat();
+    await chat.openRoom([message('lida antes')]);
+    await chat.setConnection({ status: 'offline', lastClose: { code: 1006, reason: '', category: 'transient' } });
+    expect(texts()).toEqual([['lida antes', 'sent']]);
+    expect(within(header()).getByText('Sem internet')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('O chat reconecta sozinho');
+    await userEvent.type(input(), 'sem rede{Enter}');
+    expect(texts().at(-1)).toEqual(['sem rede', 'pending']);
+    expect(chat.sent).toHaveLength(0);
+    await userEvent.click(screen.getByRole('button', { name: 'Tentar agora' }));
+    expect(chat.reconnect).toHaveBeenCalledOnce();
+  });
+
   it('enviar durante a reconexão deixa a mensagem pending, sem envio ao socket', async () => {
     const chat = renderChat();
     await chat.openRoom([]);

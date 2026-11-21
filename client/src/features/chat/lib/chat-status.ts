@@ -77,6 +77,19 @@ export function describeChatStatus({ connectionState, isReady, isLoading, error 
         },
         composerDisabledReason: null,
       };
+    case 'offline':
+      return {
+        label: 'Sem internet',
+        tone: 'warn',
+        pulse: false,
+        banner: {
+          tone: 'warn',
+          title: 'Sem internet',
+          description: 'O chat reconecta sozinho quando a conexão voltar. O que você enviar agora fica aguardando.',
+          action: { kind: 'reconnect', label: 'Tentar agora' },
+        },
+        composerDisabledReason: null,
+      };
     case 'stopped':
       // Parada sem erro exposto não deveria ocorrer (useChat sempre preenche error).
       return stopped('Conexão encerrada', 'A conexão com o chat foi encerrada.', 'reconnect', false);
