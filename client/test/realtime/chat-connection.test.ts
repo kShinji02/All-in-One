@@ -478,3 +478,47 @@ describe('dispose e limpeza', () => {
     expect(FakeSocket.instances).toHaveLength(1);
   });
 });
+
+describe('send (4.4)', () => {
+  it('só escreve com a sala aberta; antes disso devolve false sem tocar no socket', () => {
+    const { connection } = setup();
+    expect(connection.send('oi', 'n-1')).toBe(false); // sem socket
+    connection.start();
+    expect(connection.send('oi', 'n-1')).toBe(false); // connecting
+    FakeSocket.last.serverOpen();
+    expect(connection.send('oi', 'n-1')).toBe(false); // authenticating
+    expect(FakeSocket.last.sent).toHaveLength(1); // só o auth
+    acceptConnection(FakeSocket.last);
+    expect(connection.send('oi', 'n-1')).toBe(true);
+    expect(FakeSocket.last.sent.at(-1)).toBe(JSON.stringify({ type: 'send', text: 'oi', nonce: 'n-1' }));
+  });
+
+  it('devolve false reconectando, parado ou depois do dispose', () => {
+    const { connection } = setup();
+    connection.start();
+    acceptConnection(FakeSocket.last);
+    FakeSocket.last.networkFailure();
+    expect(connection.send('oi', 'n-1')).toBe(false);
+    vi.runOnlyPendingTimers();
+    FakeSocket.last.serverOpen();
+    FakeSocket.last.serverClose(4001, 'invalid_token');
+    expect(connection.send('oi', 'n-1')).toBe(false);
+    connection.dispose();
+    expect(connection.send('oi', 'n-1')).toBe(false);
+  });
+
+  it('socket que lança no send devolve false', () => {
+    const { connection } = setup();
+    connection.start();
+    acceptConnection(FakeSocket.last);
+    vi.spyOn(FakeSocket.last, 'send').mockImplementation(() => {
+      throw new Error('InvalidStateError');
+    });
+    expect(connection.send('oi', 'n-1')).toBe(false);
+  });
+
+  it('nonce inválido é erro de programação (lança), mesmo sem conexão', () => {
+    const { connection } = setup();
+    expect(() => connection.send('oi', 'com espaço')).toThrow(/nonce/);
+  });
+});

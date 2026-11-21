@@ -10,7 +10,7 @@
  * e nunca chegam ao consumidor. Fechamentos são decididos por `classifyClose`.
  */
 import { classifyClose, type CloseCategory } from '@/realtime/chat-close-codes';
-import { encodeAuth, parseServerFrame, type ChatAuthor, type ParseFailure, type ServerFrame } from '@/realtime/chat-protocol';
+import { encodeAuth, encodeSend, parseServerFrame, type ChatAuthor, type ParseFailure, type ServerFrame } from '@/realtime/chat-protocol';
 
 /* ------------------------------------------------------------------ *
  * Política de reconexão
@@ -123,6 +123,13 @@ export interface ChatConnection {
   /** Encerra tudo: fecha o socket, cancela timers e remove listeners. Irreversível. */
   dispose(): void;
   getState(): ChatConnectionState;
+  /**
+   * Escreve um { type:"send" } no socket, somente com a sala aberta ("ready").
+   * Devolve true se o frame foi entregue ao socket — isso NÃO é confirmação do
+   * servidor (ela chega como "message" com o mesmo nonce). Lança se o nonce for
+   * inválido (erro de programação, ver encodeSend).
+   */
+  send(text: string, nonce: string): boolean;
 }
 
 /* ------------------------------------------------------------------ *
@@ -319,5 +326,16 @@ export function createChatConnection(options: ChatConnectionOptions): ChatConnec
     },
 
     getState: () => state,
+
+    send(text, nonce) {
+      const frame = encodeSend(text, nonce);
+      if (disposed || !socket || state.status !== 'ready' || socket.readyState !== WS_OPEN) return false;
+      try {
+        socket.send(frame);
+        return true;
+      } catch {
+        return false;
+      }
+    },
   };
 }
