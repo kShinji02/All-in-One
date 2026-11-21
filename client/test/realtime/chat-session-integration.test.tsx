@@ -8,6 +8,7 @@ import { ParticipantsView } from '@/features/participants/ParticipantsView';
 import type { LaunchContext } from '@/lib/launch-context';
 import { ChatConnectionProvider } from '@/realtime/ChatConnectionProvider';
 import { useChatConnection } from '@/realtime/useChatConnection';
+import { useChat } from '@/realtime/useChat';
 import { acceptConnection, FakeSocket } from './fake-socket';
 
 /*
@@ -195,5 +196,80 @@ describe('chat × sessão Discord × participantes', () => {
     await pushParticipants([ANA, BRUNO, person('3', 'Carla')]);
     expect(participantsPanel().getByText('Carla')).toBeInTheDocument();
     expect(participantsPanel().getByText('Você')).toBeInTheDocument(); // sessão Discord intacta
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 4.5 — useChat sobre a sessão Discord real
+ * ------------------------------------------------------------------ */
+const chat = { current: null as ReturnType<typeof useChat> | null };
+
+function ChatProbe() {
+  chat.current = useChat();
+  return null;
+}
+
+function renderAppWithChat() {
+  return render(
+    <StrictMode>
+      <DiscordProvider launch={IN_DISCORD}>
+        <ChatConnectionProvider url="ws://test/api/chat" createSocket={(url) => new FakeSocket(url)} random={() => 0}>
+          <ParticipantsView />
+          <ChatProbe />
+        </ChatConnectionProvider>
+      </DiscordProvider>
+    </StrictMode>,
+  );
+}
+
+describe('useChat × sessão Discord × participantes', () => {
+  beforeEach(() => {
+    chat.current = null;
+  });
+
+  it('SDK ainda não pronto: chat neutro, sem socket', async () => {
+    renderAppWithChat();
+    await flush();
+    expect(chat.current).toMatchObject({ isReady: false, isLoading: false, messages: [], connectionState: { status: 'idle' } });
+    expect(FakeSocket.instances).toHaveLength(0);
+  });
+
+  it('OAuth ainda não concluído: participantes já ativos, chat ainda sem sessão', async () => {
+    renderAppWithChat();
+    await sdkReady();
+    expect(await participantsPanel().findByText('Bruno')).toBeInTheDocument();
+    expect(chat.current?.sendMessage('cedo')).toEqual({ ok: false, reason: 'no_session' });
+    expect(FakeSocket.instances).toHaveLength(0);
+  });
+
+  it('inicialização normal: autentica, conecta uma vez e fica pronto após o histórico', async () => {
+    renderAppWithChat();
+    await sdkReady();
+    await sessionSucceeds();
+    await flush();
+    expect(chat.current?.isLoading).toBe(true);
+    await act(async () => acceptConnection(FakeSocket.last));
+    expect(chat.current).toMatchObject({ isReady: true, isLoading: false, error: null });
+    expect(FakeSocket.instances).toHaveLength(1);
+  });
+
+  it('falha do chat (parada definitiva) e mensagem failed não afetam os participantes', async () => {
+    renderAppWithChat();
+    await sdkReady();
+    await sessionSucceeds();
+    await participantsPanel().findByText('Bruno');
+    await flush();
+    await act(async () => acceptConnection(FakeSocket.last));
+    await act(async () => void chat.current?.sendMessage('vai falhar'));
+    const subscriptions = fake.participants.subscribes - fake.participants.unsubscribes;
+
+    await act(async () => FakeSocket.last.serverClose(1011, 'server_misconfigured'));
+    expect(chat.current?.error).toEqual({ reason: 'unavailable', closeCode: 1011 });
+    expect(chat.current?.messages[0]).toMatchObject({ status: 'failed' });
+
+    await pushParticipants([ANA, BRUNO, person('3', 'Carla')]);
+    expect(participantsPanel().getByText('Carla')).toBeInTheDocument();
+    expect(participantsPanel().getByText('Você')).toBeInTheDocument();
+    expect(fake.participants.subscribes - fake.participants.unsubscribes).toBe(subscriptions);
   });
 });
