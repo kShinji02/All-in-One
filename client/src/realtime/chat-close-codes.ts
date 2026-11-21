@@ -31,9 +31,11 @@ export const SERVER_CLOSE_REASONS: Readonly<Record<string, { code: number; categ
   auth_timeout: { code: 4008, category: 'transient' },
   discord_unavailable: { code: 1013, category: 'transient' },
   too_many_frames: { code: 4029, category: 'transient' },
+  // O servidor usa auth_failed quando o autenticador lança uma exceção inesperada
+  // (server/chat/index.js): é falha do servidor, não do token, então vale tentar de novo.
+  auth_failed: { code: 4001, category: 'transient' },
 
   invalid_token: { code: 4001, category: 'session_expired' },
-  auth_failed: { code: 4001, category: 'session_expired' },
   auth_required: { code: 4001, category: 'session_expired' },
 
   not_in_instance: { code: 4003, category: 'left_instance' },

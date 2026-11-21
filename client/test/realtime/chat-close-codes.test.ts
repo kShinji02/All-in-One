@@ -7,7 +7,7 @@ describe('classifyClose — fechamentos do servidor', () => {
     [1013, 'discord_unavailable', 'transient', true],
     [4029, 'too_many_frames', 'transient', true],
     [4001, 'invalid_token', 'session_expired', false],
-    [4001, 'auth_failed', 'session_expired', false],
+    [4001, 'auth_failed', 'transient', true],
     [4001, 'auth_required', 'session_expired', false],
     [4003, 'not_in_instance', 'left_instance', false],
     [4003, 'instance_not_found', 'left_instance', false],
