@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { getDiscordSdk } from '@/discord/sdk';
+import { openExternalLink } from '@/discord/external-link';
 import { useDiscord } from '@/discord/useDiscord';
 import { ChatPanel } from '@/features/chat/components/ChatPanel';
 import { reloadPage } from '@/lib/reload-page';
@@ -11,15 +11,13 @@ import { useChat } from '@/realtime/useChat';
  */
 export function ChatView() {
   const chat = useChat();
-  const { sdkReady } = useDiscord();
+  const { state, sdkReady } = useDiscord();
 
-  // Dentro do Discord, links externos passam pelo SDK, que mostra a confirmação de
-  // saída do próprio Discord (o iframe da Activity não deve abrir abas por conta própria).
-  const openLink = useCallback((href: string) => {
-    getDiscordSdk()
-      .commands.openExternalLink({ url: href })
-      .catch(() => undefined);
-  }, []);
+  // Dentro do Discord (qualquer estado exceto "unavailable"), links SEMPRE passam pelo
+  // SDK — mesmo antes do handshake, quando simplesmente não abrem — e nunca pela
+  // navegação nativa do iframe, que pularia a confirmação do Discord.
+  const insideDiscord = state.status !== 'unavailable';
+  const openLink = useCallback((href: string) => void openExternalLink(href, { sdkReady }), [sdkReady]);
 
-  return <ChatPanel chat={chat} onReload={reloadPage} onOpenLink={sdkReady ? openLink : undefined} />;
+  return <ChatPanel chat={chat} onReload={reloadPage} onOpenLink={insideDiscord ? openLink : undefined} />;
 }

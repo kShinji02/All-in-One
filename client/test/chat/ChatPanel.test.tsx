@@ -82,8 +82,9 @@ describe('ChatPanel — renderização e histórico', () => {
     expect(p.className).toContain('[overflow-wrap:anywhere]');
     const links = within(p).getAllByRole('link');
     expect(links).toHaveLength(1);
-    expect(links[0]).toHaveAttribute('href', 'https://ex.com/a');
-    expect(links[0]).toHaveAttribute('rel', 'noopener noreferrer nofollow');
+    // Modo Discord (o harness passa onOpenLink): sem href, abre só pelo callback.
+    expect(links[0]).not.toHaveAttribute('href');
+    expect(links[0]).toHaveAttribute('data-external-href', 'https://ex.com/a');
     await userEvent.click(links[0]!);
     expect(chat.openLink).toHaveBeenCalledWith('https://ex.com/a');
   });
