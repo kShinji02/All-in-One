@@ -2,6 +2,25 @@
 
 Guia baseado na documentação oficial ["Building an Activity"](https://docs.discord.com/developers/activities/building-an-activity).
 
+Visão técnica em [ARQUITETURA.md](ARQUITETURA.md); protocolo do chat em [CHAT-PROTOCOL.md](CHAT-PROTOCOL.md).
+
+## Roteiro de ponta a ponta
+
+| # | Cenário | Onde está o roteiro | Coberto também por testes automatizados |
+|---|---|---|---|
+| 1 | Abrir a Activity no Discord | [5. Abrir a Activity](#5-abrir-a-activity) | `client/test/lib/launch-context.test.ts` |
+| 2 | Autenticar o usuário | [O que deve acontecer](#o-que-deve-acontecer), [Diagnóstico de erros](#diagnóstico-de-erros) | `client/test/discord/` (fluxo simulado) |
+| 3 | Carregar os participantes | [Participantes](#participantes) | `client/test/discord/participants-decoupling.test.tsx`, `client/test/participants/` |
+| 4 | Abrir o chat | [Chat: abrir e conversar](#chat-abrir-e-conversar) | `client/test/chat/ChatView.integration.test.tsx` |
+| 5 | Enviar e receber mensagens em tempo real | [Chat: abrir e conversar](#chat-abrir-e-conversar) | `client/test/realtime/*.server.test.ts*` (servidor real) |
+| 6 | Desconectar e reconectar a internet | [Chat: queda de internet](#chat-queda-de-internet) | `client/test/realtime/network-recovery.test.ts` |
+| 7 | Recuperar pendentes sem duplicar | [Chat: queda de internet](#chat-queda-de-internet) | `client/test/realtime/message-store*.test.ts`, `network-recovery.test.ts` |
+| 8 | Sair da instância | [Chat: sair da instância](#chat-sair-da-instância) | `client/test/realtime/chat-connection.server.test.ts` (revalidação real) |
+| 9 | Abrir links externos | [Chat: links externos](#chat-links-externos) | `client/test/chat/external-links.test.tsx` |
+| 10 | Recuperar um painel após erro | [Painéis com erro](#painéis-com-erro) | `client/test/home/HomeView.test.tsx` (só automatizado) |
+
+Os testes automatizados rodam com `npm test` em `server/` e em `client/`.
+
 ## 1. Configurar a aplicação no Developer Portal
 
 1. Acesse <https://discord.com/developers/applications> e abra (ou crie) a aplicação.
@@ -32,6 +51,11 @@ DISCORD_BOT_TOKEN=<token do bot da aplicação>
 - Sem o token (ou com o valor de exemplo do `example.env`), o backend sobe normalmente, mas avisa
   `Chat indisponível` no console e recusa as conexões em `/api/chat` (`4001 auth_unavailable`).
   O OAuth e a lista de participantes não dependem dele.
+- **Permissões:** o token é usado só como credencial da aplicação numa chamada REST
+  (`GET /applications/{id}/activity-instances/{instance_id}`). O chat não usa o Gateway do
+  Discord, intents nem permissões de servidor; nenhuma opção extra da página **Bot** é necessária.
+  Se o Discord recusar o token, o backend registra `DISCORD_BOT_TOKEN recusado pelo Discord`
+  (sem o valor) e o chat mostra **Chat indisponível**.
 
 ## 3. Subir backend, frontend e túnel (3 terminais)
 
@@ -126,7 +150,7 @@ O servidor e o canal aparecem como **Indisponível** quando a consulta não é p
 contexto (por exemplo, em mensagens diretas, que exigiriam `dm_channels.read`, um escopo que
 depende de aprovação do Discord).
 
-## Participantes (Fase 3)
+## Participantes
 
 A seção **Participantes** lista os usuários conectados à **mesma instância** da Activity
 (`getActivityInstanceConnectedParticipants` + evento `ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE`).
@@ -163,8 +187,74 @@ funcionando quando a troca de token falha.
 Se no passo 2 o Discord pedir autorização, aceite: o erro só aparece na etapa seguinte, a troca de
 código em `/api/token`.
 
+## Chat: abrir e conversar
+
+Pré-requisito: `DISCORD_BOT_TOKEN` configurado (`/api/health` com `"chatConfigured":true`).
+Duas contas (A e B) no mesmo canal de voz, com a mesma Activity aberta.
+
+| Passo | Ação | Resultado esperado |
+|---|---|---|
+| 1 | A abre a Activity | O painel **Chat** mostra "Conectando" → "Carregando histórico" → **Conectado**; sem mensagens, "Nenhuma mensagem ainda" |
+| 2 | A envia "oi" com **Enter** | A mensagem aparece na hora com "Enviando…" e, em seguida, com o horário |
+| 3 | Observe a tela de B | "oi" aparece uma única vez, com o nome e o avatar de A |
+| 4 | B responde | Aparece para A em tempo real, sem recarregar |
+| 5 | A quebra a linha com **Shift+Enter** e envia | As linhas são preservadas |
+| 6 | A rola para cima e B envia outra mensagem | A posição de A não muda; aparece o indicador "1 nova mensagem" |
+| 7 | B fecha e reabre a Activity | O histórico (até 100 mensagens) volta, sem duplicações |
+
+## Chat: queda de internet
+
+Use `npm run dev:discord` (veja a seção 3). Com o `npm run dev`, o Vite recarrega a Activity
+quando a rede volta e o teste não é válido.
+
+| Passo | Ação | Resultado esperado |
+|---|---|---|
+| 1 | A (celular) espera **Conectado** e deixa aberto por 2 a 3 minutos | Continua **Conectado**, sem alternar |
+| 2 | A desliga a internet | O chat mostra **Sem internet** (ou **Reconectando…**, se o celular não avisar a queda); o histórico continua visível |
+| 3 | A envia uma mensagem | Fica com "Enviando…" |
+| 4 | B envia uma mensagem enquanto A está sem internet | Nada muda na tela de A |
+| 5 | A religa a internet | Em segundos, volta a **Conectado** sozinho; a mensagem de B aparece (recuperada pelo histórico) |
+| 6 | Observe a mensagem de A | Passa a enviada **uma única vez**, na tela de A e na de B |
+| 7 | Espere alguns minutos | Continua **Conectado** |
+
+Se a conexão não voltar (por exemplo, com o servidor fora do ar), depois de 8 tentativas o chat
+mostra **Sem conexão** com **Reconectar**. Mensagens enviadas nesse meio-tempo ficam aguardando
+ou com **Tentar de novo** (o reenvio usa o mesmo identificador e não duplica).
+
+## Chat: sair da instância
+
+| Passo | Ação | Resultado esperado |
+|---|---|---|
+| 1 | A e B com o chat **Conectado** | Nada a observar ainda |
+| 2 | B fecha a Activity | B some da lista de **Participantes** de A; o chat de A continua **Conectado** |
+| 3 | B sai do canal de voz com a Activity ainda aberta em outro dispositivo e espera até 1 min | O servidor revalida os membros a cada 60 s: o chat de B mostra **Fora da Activity** com **Recarregar Activity**, sem novas tentativas |
+
+O passo 3 é difícil de reproduzir à mão; a revalidação é coberta por
+`client/test/realtime/chat-connection.server.test.ts`, com o servidor real.
+
+## Chat: links externos
+
+| Passo | Ação | Resultado esperado |
+|---|---|---|
+| 1 | Envie `https://example.com/teste-link` | Aparece como link |
+| 2 | Clique com o botão esquerdo | O Discord mostra a confirmação de saída (o navegador não abre direto) |
+| 3 | Cancele | Nada abre |
+| 4 | Clique com o botão do meio | O mesmo modal do Discord, sem rolagem automática nem abertura direta |
+
+Domínios marcados como **Trust this Domain** abrem sem o modal (comportamento do Discord). Para
+este teste, use um domínio que você ainda não marcou como confiável. Se algo falhar, o console
+(Ctrl+Shift+I) mostra `[chat] openExternalLink falhou (<código>)`, sem a URL.
+
+## Painéis com erro
+
+Cada painel da Home (Ambiente, Chat, Participantes, Sessão Discord) é isolado: se um deles falhar
+ao renderizar, aparece "<Painel> indisponível no momento" com **Tentar novamente**, e os demais
+continuam funcionando. Esse cenário não é reproduzível manualmente sem alterar o código; ele é
+coberto por `client/test/home/HomeView.test.tsx`.
+
 ## Observação sobre HMR
 
 O `vite.config.ts` usa `hmr.clientPort: 443` para funcionar através do túnel HTTPS. Ao abrir
-`http://localhost:5173` diretamente, o console mostra erros de WebSocket para a porta 443 e o
-recarregamento automático não funciona — use F5. Esse comportamento vem do template original.
+`http://localhost:5173` diretamente com `npm run dev`, o console mostra erros de WebSocket para a
+porta 443 e o recarregamento automático não funciona — use F5. Com `npm run dev:discord` não há
+HMR: depois de editar o código, espere `[dev:discord] rebuild concluído` e reabra a Activity.
