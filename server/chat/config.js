@@ -28,8 +28,16 @@ export const DISCORD_CDN_BASE = "https://cdn.discordapp.com";
 /** Tempo máximo de cada chamada à API do Discord (as duas correm em paralelo, dentro do AUTH_TIMEOUT_MS). */
 export const DISCORD_REQUEST_TIMEOUT_MS = 4_000;
 
-/** Cache do /users/@me, indexado pelo SHA-256 do token (o token em si nunca é guardado). */
-export const TOKEN_CACHE_TTL_MS = 5 * 60_000;
+/**
+ * Cache do /users/@me, indexado pelo SHA-256 do token (o token em si nunca é guardado).
+ *
+ * Um token revogado continua aceito para NOVAS conexões enquanto estiver em cache. O TTL é
+ * igual à revalidação dos membros (MEMBERSHIP_REVALIDATE_MS): a janela de revogação fica no
+ * mesmo patamar da janela de saída da instância. Custo: no máximo uma chamada extra a
+ * /users/@me por usuário e minuto em reconexões (limite por token, não da aplicação).
+ * Respostas 401/403 nunca entram no cache.
+ */
+export const TOKEN_CACHE_TTL_MS = 60_000;
 export const TOKEN_CACHE_MAX_ENTRIES = 1_000;
 
 /** Cache do activity-instances (lista de usuários conectados à instância). */

@@ -33,6 +33,9 @@ export function attachChat(server, options = {}) {
   const {
     path = CHAT_PATH,
     discordClientId = null,
+    // Perfil de origens aceitas (chat/origin.js): "production", "local" ou "tunnel".
+    originProfile = "tunnel",
+    extraOrigins = [],
     authenticate = authenticationUnavailable,
     getMembers = null,
     authTimeoutMs = AUTH_TIMEOUT_MS,
@@ -71,7 +74,7 @@ export function attachChat(server, options = {}) {
       return rejectUpgrade(socket, 400, "Bad Request");
     }
     if (pathname !== path) return rejectUpgrade(socket, 404, "Not Found");
-    if (!isAllowedOrigin(req.headers.origin, { discordClientId })) {
+    if (!isAllowedOrigin(req.headers.origin, { discordClientId, profile: originProfile, extraOrigins })) {
       return rejectUpgrade(socket, 403, "Forbidden");
     }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));

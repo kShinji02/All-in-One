@@ -1,13 +1,13 @@
 import http from "node:http";
-import express from "express";
 import dotenv from "dotenv";
 import fetch from "node-fetch";
+import { createApp, parsePerMinute, parseTrustProxy, TOKEN_GLOBAL_RATE_LIMIT, TOKEN_RATE_LIMIT } from "./app.js";
 import { attachChat } from "./chat/index.js";
 import { createDiscordAuthenticator } from "./chat/authenticator.js";
+import { parseExtraOrigins, resolveOriginProfile } from "./chat/origin.js";
 import { ENV_PATH } from "./env-path.js";
 dotenv.config({ path: ENV_PATH });
 
-const app = express();
 const port = 3001;
 
 // Valores de exemplo do example.env que não são credenciais reais.
@@ -49,106 +49,27 @@ if (!chatConfigured) {
   );
 }
 
-// Allow express to parse JSON bodies
-app.use(express.json());
+// Opções de implantação (opcionais; ver docs/SEGURANCA.md):
+// - TRUST_PROXY: proxies confiáveis para o IP do cliente no rate limit (padrão: nenhum).
+// - TOKEN_RATE_LIMIT / TOKEN_GLOBAL_RATE_LIMIT: trocas de código por minuto (por cliente / total).
+// - ORIGIN_PROFILE: "production" | "local" | "tunnel" (padrão: production se NODE_ENV=production).
+// - CHAT_EXTRA_ORIGINS: origens HTTPS exatas adicionais para o WebSocket do chat.
+const trustProxy = parseTrustProxy(process.env.TRUST_PROXY);
+const tokenRateLimit = parsePerMinute(process.env.TOKEN_RATE_LIMIT, TOKEN_RATE_LIMIT, "TOKEN_RATE_LIMIT");
+const tokenGlobalRateLimit = parsePerMinute(process.env.TOKEN_GLOBAL_RATE_LIMIT, TOKEN_GLOBAL_RATE_LIMIT, "TOKEN_GLOBAL_RATE_LIMIT");
+const originProfile = resolveOriginProfile(process.env);
+const extraOrigins = parseExtraOrigins(process.env.CHAT_EXTRA_ORIGINS);
+console.log(`[config] Origens do chat: perfil "${originProfile}"${extraOrigins.length ? ` + ${extraOrigins.length} extra(s)` : ""}.`);
 
-// Verificação de disponibilidade. Não revela valores de configuração.
-app.get("/api/health", (req, res) => {
-  res.send({ ok: true, oauthConfigured: missingEnv.length === 0, chatConfigured });
-});
-
-app.post("/api/token", async (req, res) => {
-  if (missingEnv.length > 0) {
-    return res.status(500).send({
-      error: "server_misconfigured",
-      message: "O servidor não tem as credenciais OAuth2 configuradas no .env.",
-    });
-  }
-
-  const code = req.body?.code;
-  if (typeof code !== "string" || code.trim() === "") {
-    return res.status(400).send({
-      error: "invalid_request",
-      message: 'O corpo da requisição deve conter "code" (string).',
-    });
-  }
-
-  let response;
-  try {
-    // Exchange the code for an access_token
-    response = await fetch(`https://discord.com/api/oauth2/token`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        grant_type: "authorization_code",
-        code,
-      }),
-    });
-  } catch (err) {
-    console.error("[oauth] Falha de rede ao contatar o Discord:", err.message);
-    return res.status(502).send({
-      error: "discord_unreachable",
-      message: "Não foi possível contatar a API do Discord.",
-    });
-  }
-
-  const data = await response.json().catch(() => null);
-
-  if (!response.ok || typeof data?.access_token !== "string") {
-    // Repassa apenas o código de erro público do OAuth2 (ex.: invalid_grant).
-    const discordError = typeof data?.error === "string" ? data.error : "unknown_error";
-    console.error(`[oauth] Troca de código recusada (${response.status}): ${discordError}`);
-    return res.status(response.ok ? 502 : response.status >= 500 ? 502 : 400).send({
-      error: "token_exchange_failed",
-      discordError,
-      message: "O Discord recusou a troca do código de autorização.",
-    });
-  }
-
-  // Return the access_token to our client as { access_token: "..."}
-  res.send({ access_token: data.access_token });
-});
-
-// Erros não tratados respondem em JSON, sem stack trace, preservando o status
-// HTTP definido pelo body-parser (400, 413, 415...). Demais erros viram 500.
-app.use((err, req, res, next) => {
-  if (res.headersSent) return next(err);
-
-  if (err?.type === "entity.parse.failed") {
-    return res.status(400).send({
-      error: "invalid_request",
-      message: "O corpo da requisição não é um JSON válido.",
-    });
-  }
-
-  if (err?.type === "entity.too.large") {
-    return res.status(413).send({
-      error: "payload_too_large",
-      message: "O corpo da requisição excede o limite permitido.",
-    });
-  }
-
-  const status = Number(err?.status ?? err?.statusCode);
-  if (Number.isInteger(status) && status >= 400 && status < 500) {
-    return res.status(status).send({
-      error: "invalid_request",
-      message: "A requisição não pôde ser processada.",
-    });
-  }
-
-  console.error("[server] Erro inesperado:", err?.message ?? err);
-  res.status(500).send({ error: "internal_error", message: "Erro interno do servidor." });
-});
+const app = createApp({ clientId, clientSecret, chatConfigured, fetchImpl: fetch, trustProxy, tokenRateLimit, tokenGlobalRateLimit });
 
 // Servidor HTTP explícito para que o WebSocket do chat compartilhe a mesma porta.
 const server = http.createServer(app);
 const chatAuthenticator = chatConfigured ? createDiscordAuthenticator({ applicationId: clientId, botToken }) : null;
 attachChat(server, {
   discordClientId: clientId,
+  originProfile,
+  extraOrigins,
   // Sem configuração completa, mantém o autenticador padrão, que recusa todas as conexões.
   ...(chatAuthenticator && {
     authenticate: chatAuthenticator,

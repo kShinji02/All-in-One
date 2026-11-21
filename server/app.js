@@ -1,0 +1,193 @@
+import express from "express";
+import { createSlidingWindowLimiter } from "./chat/rate-limit.js";
+
+/** Troca de código OAuth2 → access_token (documentação: "OAuth2 → Authorization Code Grant"). */
+export const DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token";
+
+/**
+ * Limites de POST /api/token.
+ *
+ * O fluxo legítimo faz UMA troca por abertura da Activity (mais as novas tentativas do
+ * botão "Tentar novamente"); 10 por minuto por cliente cobre isso com folga. O limite global
+ * protege a cota OAuth da aplicação no Discord mesmo que o atacante troque de IP.
+ */
+export const TOKEN_RATE_LIMIT = Object.freeze({ limit: 10, windowMs: 60_000 });
+export const TOKEN_GLOBAL_RATE_LIMIT = Object.freeze({ limit: 120, windowMs: 60_000 });
+/** Tempo máximo esperando o Discord na troca do código. */
+export const TOKEN_EXCHANGE_TIMEOUT_MS = 10_000;
+
+/**
+ * Cria o app Express (rotas HTTP). Sem efeitos colaterais: não lê o ambiente nem abre
+ * portas, para que as rotas possam ser testadas com dependências controladas.
+ *
+ * `trustProxy` segue a semântica do Express ("trust proxy"): `false` (padrão) usa só o
+ * endereço do socket e IGNORA X-Forwarded-For; um número N confia nos N proxies mais
+ * próximos; também aceita listas/sub-redes ("loopback", "10.0.0.0/8"). Configure apenas
+ * os proxies que você controla: qualquer cliente pode forjar X-Forwarded-For.
+ */
+export function createApp({
+  clientId = null,
+  clientSecret = null,
+  chatConfigured = false,
+  fetchImpl = globalThis.fetch,
+  logger = console,
+  now = Date.now,
+  trustProxy = false,
+  tokenRateLimit = TOKEN_RATE_LIMIT,
+  tokenGlobalRateLimit = TOKEN_GLOBAL_RATE_LIMIT,
+  tokenExchangeTimeoutMs = TOKEN_EXCHANGE_TIMEOUT_MS,
+} = {}) {
+  const app = express();
+  app.set("trust proxy", trustProxy);
+  app.disable("x-powered-by");
+
+  const oauthConfigured = Boolean(clientId && clientSecret);
+  const perClient = createSlidingWindowLimiter({ ...tokenRateLimit, now });
+  const global = createSlidingWindowLimiter({ ...tokenGlobalRateLimit, now });
+  // Limpeza periódica das chaves inativas (sem acúmulo de memória com muitos IPs).
+  const sweeper = setInterval(() => {
+    perClient.sweep();
+    global.sweep();
+  }, tokenRateLimit.windowMs);
+  sweeper.unref?.();
+
+  app.use(express.json());
+
+  // Verificação de disponibilidade. Não revela valores de configuração.
+  app.get("/api/health", (req, res) => {
+    res.send({ ok: true, oauthConfigured, chatConfigured });
+  });
+
+  /** 429 com Retry-After (segundos, arredondado para cima) e o tempo em ms no corpo. */
+  function tooManyRequests(res, retryAfterMs) {
+    res.set("Retry-After", String(Math.ceil(retryAfterMs / 1000)));
+    return res.status(429).send({
+      error: "rate_limited",
+      retryAfterMs,
+      message: "Muitas tentativas de autenticação. Aguarde e tente novamente.",
+    });
+  }
+
+  app.post("/api/token", async (req, res) => {
+    // Primeiro o limite (antes de validar o corpo): requisições inválidas também contam.
+    // `req.ip` respeita "trust proxy": sem proxy confiável, é o endereço real do socket.
+    const client = perClient.hit(req.ip ?? "unknown");
+    if (!client.allowed) return tooManyRequests(res, client.retryAfterMs);
+    const overall = global.hit("all");
+    if (!overall.allowed) return tooManyRequests(res, overall.retryAfterMs);
+
+    if (!oauthConfigured) {
+      return res.status(500).send({
+        error: "server_misconfigured",
+        message: "O servidor não tem as credenciais OAuth2 configuradas no .env.",
+      });
+    }
+
+    const code = req.body?.code;
+    if (typeof code !== "string" || code.trim() === "") {
+      return res.status(400).send({
+        error: "invalid_request",
+        message: 'O corpo da requisição deve conter "code" (string).',
+      });
+    }
+
+    let response;
+    try {
+      response = await fetchImpl(DISCORD_TOKEN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          grant_type: "authorization_code",
+          code,
+        }),
+        signal: AbortSignal.timeout(tokenExchangeTimeoutMs),
+      });
+    } catch (err) {
+      // Só o tipo do erro: a mensagem pode conter a URL ou detalhes da requisição.
+      logger.error(`[oauth] Falha de rede ao contatar o Discord (${err?.name ?? "erro"}).`);
+      return res.status(502).send({
+        error: "discord_unreachable",
+        message: "Não foi possível contatar a API do Discord.",
+      });
+    }
+
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || typeof data?.access_token !== "string") {
+      // Repassa apenas o código de erro público do OAuth2 (ex.: invalid_grant).
+      const discordError = typeof data?.error === "string" ? data.error : "unknown_error";
+      logger.error(`[oauth] Troca de código recusada (${response.status}): ${discordError}`);
+      return res.status(response.ok ? 502 : response.status >= 500 ? 502 : 400).send({
+        error: "token_exchange_failed",
+        discordError,
+        message: "O Discord recusou a troca do código de autorização.",
+      });
+    }
+
+    res.send({ access_token: data.access_token });
+  });
+
+  // Erros não tratados respondem em JSON, sem stack trace, preservando o status
+  // HTTP definido pelo body-parser (400, 413, 415...). Demais erros viram 500.
+  app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+
+    if (err?.type === "entity.parse.failed") {
+      return res.status(400).send({
+        error: "invalid_request",
+        message: "O corpo da requisição não é um JSON válido.",
+      });
+    }
+
+    if (err?.type === "entity.too.large") {
+      return res.status(413).send({
+        error: "payload_too_large",
+        message: "O corpo da requisição excede o limite permitido.",
+      });
+    }
+
+    const status = Number(err?.status ?? err?.statusCode);
+    if (Number.isInteger(status) && status >= 400 && status < 500) {
+      return res.status(status).send({
+        error: "invalid_request",
+        message: "A requisição não pôde ser processada.",
+      });
+    }
+
+    logger.error("[server] Erro inesperado:", err?.message ?? err);
+    res.status(500).send({ error: "internal_error", message: "Erro interno do servidor." });
+  });
+
+  /** Para os timers internos (testes). */
+  app.locals.close = () => clearInterval(sweeper);
+  return app;
+}
+
+/**
+ * Limite por minuto vindo do ambiente (TOKEN_RATE_LIMIT / TOKEN_GLOBAL_RATE_LIMIT).
+ * Vazio → `fallback`; precisa ser um inteiro entre 1 e 10000.
+ */
+export function parsePerMinute(raw, fallback, name = "limite") {
+  const value = raw?.trim();
+  if (!value) return fallback;
+  if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 10_000) {
+    throw new Error(`${name} deve ser um inteiro entre 1 e 10000 (requisições por minuto): "${value}".`);
+  }
+  return Object.freeze({ limit: Number(value), windowMs: 60_000 });
+}
+
+/**
+ * Lê TRUST_PROXY do ambiente. Vazio/"false" → false (padrão seguro); "true" é recusado
+ * (confiaria em qualquer X-Forwarded-For); número → hops; outros valores → lista/sub-rede.
+ */
+export function parseTrustProxy(raw) {
+  const value = raw?.trim();
+  if (!value || value === "false" || value === "0") return false;
+  if (value === "true") {
+    throw new Error('TRUST_PROXY=true confiaria em qualquer X-Forwarded-For; use um número de proxies ou uma sub-rede (ex.: "1" ou "loopback").');
+  }
+  if (/^\d+$/.test(value)) return Number(value);
+  return value;
+}

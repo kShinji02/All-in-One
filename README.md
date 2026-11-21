@@ -39,7 +39,8 @@ Express + `ws` no backend.
 │   ├── scripts/           dev-discord.mjs (servidor para testar dentro do Discord)
 │   └── test/              Testes (Vitest + Testing Library)
 ├── server/            Backend (Express + ws)
-│   ├── server.js          /api/health, /api/token (OAuth) e acoplamento do chat
+│   ├── server.js          Entrada: lê o ambiente, monta o app e o chat, abre a porta 3001
+│   ├── app.js             Rotas HTTP (/api/health, /api/token com rate limit)
 │   ├── chat/              Chat: autenticação, salas, protocolo, limites
 │   └── test/              Testes (node:test)
 ├── docs/              Documentação
@@ -67,7 +68,10 @@ cd ../client && npm install
    | `DISCORD_CLIENT_SECRET` | Developer Portal → OAuth2 → Client Secret | só o backend (troca do código OAuth) |
    | `DISCORD_BOT_TOKEN` | Developer Portal → Bot → Reset Token | só o backend (validação da instância no chat) |
 
-   Só variáveis com prefixo `VITE_` chegam ao navegador. O passo a passo completo do Developer
+   Só variáveis com prefixo `VITE_` chegam ao navegador. Para produção há variáveis opcionais
+   do backend (`NODE_ENV`, `ORIGIN_PROFILE`, `CHAT_EXTRA_ORIGINS`, `TRUST_PROXY`,
+   `TOKEN_RATE_LIMIT`, `TOKEN_GLOBAL_RATE_LIMIT`), descritas em
+   [docs/SEGURANCA.md](docs/SEGURANCA.md#configuração-de-produção). O passo a passo completo do Developer
    Portal, do Bot Token e do túnel está em [docs/TESTE-NO-DISCORD.md](docs/TESTE-NO-DISCORD.md).
 
 2. Confira o backend: `curl http://localhost:3001/api/health` deve responder
@@ -131,4 +135,5 @@ cd client && npm run build      # gera client/dist
 
 O backend não serve o `client/dist`: em produção, publique o build num servidor de arquivos
 estáticos com `/api` (HTTP e WebSocket) encaminhado ao backend, e mapeie esse endereço no
-URL Mapping da Activity.
+URL Mapping da Activity. Inicie o backend com `NODE_ENV=production` (só o `discordsays.com`
+da aplicação é aceito no chat) e ajuste `TRUST_PROXY` aos seus proxies.

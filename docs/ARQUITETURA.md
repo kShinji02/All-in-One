@@ -32,7 +32,8 @@ página (`startDiscordSession` é memorizado, compatível com StrictMode):
 
 1. `sdk.ready()` — handshake (prazo de 10 s; erro `ready_timeout`).
 2. `commands.authorize` com os escopos `identify` e `guilds`.
-3. `POST /api/token` — o backend troca o código pelo `access_token` usando o Client Secret.
+3. `POST /api/token` — o backend troca o código pelo `access_token` usando o Client Secret
+   (rate limit por cliente e global; acima dele, `429` com `Retry-After`).
 4. `commands.authenticate` com o token.
 5. Contexto: canal (`commands.getChannel`) e servidor (`/users/@me/guilds`).
 
@@ -161,5 +162,5 @@ link comum (`target="_blank"`, `rel="noopener noreferrer nofollow"`).
 - **Desenvolvimento:** `npm run dev` (HMR) recarrega a Activity quando a rede volta e o HMR só
   funciona pelo túnel; use `npm run dev:discord` para testes no celular e de rede.
 - **Produção:** o backend não serve o `client/dist`; o deploy precisa de um servidor estático
-  com `/api` (HTTP e WebSocket) encaminhado ao backend. `/api/token` não tem rate limit próprio
-  (ver [SEGURANCA.md](SEGURANCA.md)).
+  com `/api` (HTTP e WebSocket) encaminhado ao backend. Configure `NODE_ENV=production` (origens
+  restritas) e `TRUST_PROXY` conforme os proxies (ver [SEGURANCA.md](SEGURANCA.md#configuração-de-produção)).

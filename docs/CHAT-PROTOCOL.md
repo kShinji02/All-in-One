@@ -7,9 +7,11 @@ frame, códigos de erro e pares de fechamento) e roda o servidor real: se diverg
 ## Conexão
 
 - URL: `wss://<host da página>/api/chat` (mesma origem da Activity; `ws://` em `http`).
-- O upgrade só é aceito com `Origin` permitido: `https://<client_id>.discordsays.com`,
-  `https://*.trycloudflare.com` (desenvolvimento) ou `localhost` / `127.0.0.1` / `[::1]`.
-  Caso contrário: HTTP 403. Rota diferente de `/api/chat`: 404.
+- O upgrade só é aceito com `Origin` permitido pelo perfil do ambiente (`ORIGIN_PROFILE`):
+  `production` aceita só `https://<client_id>.discordsays.com` (e origens extras exatas);
+  `local` também `localhost` / `127.0.0.1` / `[::1]`; `tunnel` (padrão fora de produção) também
+  `https://<subdomínio>.trycloudflare.com`. Caso contrário: HTTP 403. Rota diferente de
+  `/api/chat`: 404. Detalhes em [SEGURANCA.md](SEGURANCA.md#configuração-de-produção).
 - Frames só de texto (JSON), até 4 KiB cada. Binário fecha com `4000 binary_not_supported`;
   acima do limite, 1009.
 - O primeiro frame deve ser `auth`, em até 5 s (senão `4008 auth_timeout`).
@@ -70,7 +72,7 @@ a mensagem estiver no histórico (100 mensagens) e a sala existir.
 | Frames | 30 por conexão a cada 10 s → fecha com `4029 too_many_frames` |
 | Conexões | 3 por usuário, 50 por sala |
 | Revalidação | a cada 60 s o servidor consulta os membros da instância; quem saiu é desconectado |
-| Caches no servidor | `/users/@me` por 5 min (chave: SHA-256 do token); membros da instância por 20 s |
+| Caches no servidor | `/users/@me` por 60 s (chave: SHA-256 do token); membros da instância por 20 s |
 
 ## Códigos de fechamento
 
