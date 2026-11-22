@@ -85,13 +85,15 @@ test("validações simultâneas do mesmo token fazem uma única chamada", async 
   assert.ok(results.every((u) => u.id === USER_A.id));
 });
 
-test("token inválido ou expirado (401) → 4001 invalid_token, sem cache negativo", async () => {
+// Fase 5.1: o 401 passa a entrar num cache negativo curto (antes: sem cache negativo).
+test("token inválido ou expirado (401) → 4001 invalid_token; repetir o mesmo token não chama o Discord de novo", async () => {
   const { fetchImpl, calls } = defaultDiscord();
   const tokens = createTokenValidator({ fetchImpl });
   await rejectsWith(tokens.validate("expirado"), CloseCode.UNAUTHORIZED, "invalid_token");
   await rejectsWith(tokens.validate("expirado"), CloseCode.UNAUTHORIZED, "invalid_token");
-  assert.equal(calls.length, 2);
-  assert.equal(tokens.size(), 0);
+  assert.equal(calls.length, 1);
+  assert.equal(tokens.size(), 0, "nada entra no cache positivo");
+  assert.deepEqual(tokens.invalidKeys(), [tokenCacheKey("expirado")], "o cache negativo guarda só o hash");
 });
 
 test("403 também é tratado como token inválido", async () => {

@@ -12,6 +12,11 @@ frame, códigos de erro e pares de fechamento) e roda o servidor real: se diverg
   `local` também `localhost` / `127.0.0.1` / `[::1]`; `tunnel` (padrão fora de produção) também
   `https://<subdomínio>.trycloudflare.com`. Caso contrário: HTTP 403. Rota diferente de
   `/api/chat`: 404. Detalhes em [SEGURANCA.md](SEGURANCA.md#configuração-de-produção).
+- Proteção contra abuso, antes de aceitar o socket: um IP com 20 falhas de autenticação em
+  5 min, mais de 60 upgrades por minuto ou 50 sockets ainda não autenticados recebe HTTP 429
+  com `Retry-After`; acima de 500 sockets não autenticados no total, HTTP 503. O navegador vê
+  `1006` e o cliente reconecta com backoff. Detalhes em
+  [SEGURANCA.md](SEGURANCA.md#proteção-da-autenticação-do-websocket-fase-51).
 - Frames só de texto (JSON), até 4 KiB cada. Binário fecha com `4000 binary_not_supported`;
   acima do limite, 1009.
 - O primeiro frame deve ser `auth`, em até 5 s (senão `4008 auth_timeout`).
@@ -72,7 +77,7 @@ a mensagem estiver no histórico (100 mensagens) e a sala existir.
 | Frames | 30 por conexão a cada 10 s → fecha com `4029 too_many_frames` |
 | Conexões | 3 por usuário, 50 por sala |
 | Revalidação | a cada 60 s o servidor consulta os membros da instância; quem saiu é desconectado |
-| Caches no servidor | `/users/@me` por 60 s (chave: SHA-256 do token); membros da instância por 20 s |
+| Caches no servidor | `/users/@me` por 60 s (chave: SHA-256 do token); token recusado (401/403) por 60 s; membros da instância por 20 s |
 
 ## Códigos de fechamento
 
@@ -81,7 +86,7 @@ Classificação no cliente: `client/src/realtime/chat-close-codes.ts`.
 | Código | Motivo | Categoria | O cliente |
 |---|---|---|---|
 | 4008 | `auth_timeout` | transient | reconecta com backoff |
-| 1013 | `discord_unavailable` | transient | reconecta com backoff |
+| 1013 | `discord_unavailable` (inclui 429 do Discord e teto de validações) | transient | reconecta com backoff |
 | 4029 | `too_many_frames` | transient | reconecta com backoff |
 | 4001 | `auth_failed` (falha inesperada no autenticador) | transient | reconecta com backoff |
 | 4001 | `invalid_token`, `auth_required` | session_expired | para; "Recarregar Activity" |

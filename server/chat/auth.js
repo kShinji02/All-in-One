@@ -3,10 +3,14 @@ import {
   CloseCode,
   DISCORD_CDN_BASE,
   DISCORD_REQUEST_TIMEOUT_MS,
+  INVALID_TOKEN_CACHE_MAX_ENTRIES,
+  INVALID_TOKEN_CACHE_TTL_MS,
   TOKEN_CACHE_MAX_ENTRIES,
   TOKEN_CACHE_TTL_MS,
+  TOKEN_VALIDATION_RATE_LIMIT,
 } from "./config.js";
-import { describeResponse, discordGet } from "./discord-api.js";
+import { createRetryGate, describeResponse, discordGet } from "./discord-api.js";
+import { createSlidingWindowLimiter } from "./rate-limit.js";
 import { ChatCloseError } from "./errors.js";
 
 /**
@@ -15,7 +19,11 @@ import { ChatCloseError } from "./errors.js";
  * - A identidade vem SOMENTE da resposta do Discord; nada enviado pelo cliente é usado.
  * - O cache é indexado pelo SHA-256 do token; o token em si não é guardado.
  * - Requisições simultâneas com o mesmo token compartilham uma única chamada.
- * - Respostas negativas não são guardadas em cache.
+ * - Token recusado (401/403) entra num cache NEGATIVO curto, também por hash: repetir o
+ *   mesmo token inválido não gera nova chamada ao Discord.
+ * - Chamadas reais (cache miss) têm teto global: alternar tokens inválidos, de quantos IPs
+ *   for, nunca passa de `validationRateLimit` chamadas por janela.
+ * - 429 do Discord: respeita o Retry-After (global → todas as validações; senão, só o token).
  */
 export function createTokenValidator({
   fetchImpl = globalThis.fetch,
@@ -24,11 +32,18 @@ export function createTokenValidator({
   maxEntries = TOKEN_CACHE_MAX_ENTRIES,
   timeoutMs = DISCORD_REQUEST_TIMEOUT_MS,
   logger = console,
+  invalidTtlMs = INVALID_TOKEN_CACHE_TTL_MS,
+  invalidMaxEntries = INVALID_TOKEN_CACHE_MAX_ENTRIES,
+  validationRateLimit = TOKEN_VALIDATION_RATE_LIMIT,
+  gate = createRetryGate({ now }),
 } = {}) {
   const cache = new Map(); // hash -> { user, expiresAt }
+  const invalid = new Map(); // hash -> expiresAt (token recusado pelo Discord)
   const inflight = new Map(); // hash -> Promise<user>
+  const outbound = createSlidingWindowLimiter({ ...validationRateLimit, now });
+  const unavailable = () => new ChatCloseError(CloseCode.TRY_AGAIN_LATER, "discord_unavailable");
 
-  async function fetchUser(accessToken) {
+  async function fetchUser(accessToken, key) {
     const result = await discordGet("/users/@me", {
       authorization: `Bearer ${accessToken}`,
       fetchImpl,
@@ -38,7 +53,15 @@ export function createTokenValidator({
     if (result.ok && isDiscordUser(result.body)) return toChatUser(result.body);
 
     if (result.status === 401 || result.status === 403) {
+      remember(invalid, key, now() + invalidTtlMs, invalidMaxEntries);
       throw new ChatCloseError(CloseCode.UNAUTHORIZED, "invalid_token");
+    }
+
+    if (result.rateLimit) {
+      const { retryAfterMs, global } = result.rateLimit;
+      gate.block(global ? "bearer" : `bearer:${key}`, retryAfterMs);
+      logger.warn(`[chat] /users/@me limitado pelo Discord (429, ${global ? "global" : "token"}, ${retryAfterMs} ms)`);
+      throw unavailable();
     }
 
     logger.warn(`[chat] /users/@me indisponível (${describeResponse(result)})`);
@@ -53,9 +76,21 @@ export function createTokenValidator({
       if (cached && cached.expiresAt > now()) return cached.user;
       if (cached) cache.delete(key);
 
+      const refusedUntil = invalid.get(key);
+      if (refusedUntil !== undefined && refusedUntil > now()) {
+        throw new ChatCloseError(CloseCode.UNAUTHORIZED, "invalid_token");
+      }
+      if (refusedUntil !== undefined) invalid.delete(key);
+
       let pending = inflight.get(key);
       if (!pending) {
-        pending = fetchUser(accessToken)
+        // Só chamadas reais ao Discord passam por aqui (cache e chamadas em andamento não).
+        if (gate.remaining("bearer", `bearer:${key}`) > 0) throw unavailable();
+        if (!outbound.hit("discord").allowed) {
+          logger.warn("[chat] teto de validações de token atingido; recusando temporariamente");
+          throw unavailable();
+        }
+        pending = fetchUser(accessToken, key)
           .then((user) => {
             remember(cache, key, { user, expiresAt: now() + ttlMs }, maxEntries);
             return user;
@@ -69,6 +104,14 @@ export function createTokenValidator({
     size: () => cache.size,
     /** Chaves do cache (somente hashes), para testes. */
     keys: () => [...cache.keys()],
+    /** Entradas do cache negativo (somente hashes), para testes. */
+    invalidKeys: () => [...invalid.keys()],
+    /** Remove entradas e janelas vencidas (chamado periodicamente). */
+    sweep() {
+      const at = now();
+      for (const [key, until] of invalid) if (until <= at) invalid.delete(key);
+      outbound.sweep();
+    },
   };
 }
 

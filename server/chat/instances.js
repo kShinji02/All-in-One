@@ -5,7 +5,7 @@ import {
   INSTANCE_CACHE_TTL_MS,
   INSTANCE_ID_PATTERN,
 } from "./config.js";
-import { describeResponse, discordGet } from "./discord-api.js";
+import { createRetryGate, describeResponse, discordGet } from "./discord-api.js";
 import { remember } from "./auth.js";
 import { ChatCloseError } from "./errors.js";
 
@@ -27,6 +27,7 @@ export function createInstanceVerifier({
   maxEntries = INSTANCE_CACHE_MAX_ENTRIES,
   timeoutMs = DISCORD_REQUEST_TIMEOUT_MS,
   logger = console,
+  gate = createRetryGate({ now }),
 }) {
   if (!applicationId || !botToken) {
     throw new Error("createInstanceVerifier requer applicationId e botToken");
@@ -36,6 +37,8 @@ export function createInstanceVerifier({
   const inflight = new Map(); // instanceId -> Promise<snapshot>
 
   async function fetchInstance(instanceId) {
+    // 429 anterior ainda vigente: não chama o Discord (o cache válido continua servindo).
+    if (gate.remaining("bot") > 0) throw new ChatCloseError(CloseCode.TRY_AGAIN_LATER, "discord_unavailable");
     const path = `/applications/${encodeURIComponent(applicationId)}/activity-instances/${encodeURIComponent(instanceId)}`;
     const result = await discordGet(path, { authorization: `Bot ${botToken}`, fetchImpl, timeoutMs });
 
@@ -53,6 +56,12 @@ export function createInstanceVerifier({
       // Problema de configuração do servidor, não do usuário. Nunca registra o token.
       logger.error(`[chat] DISCORD_BOT_TOKEN recusado pelo Discord (${describeResponse(result)}).`);
       throw new ChatCloseError(CloseCode.INTERNAL_ERROR, "server_misconfigured");
+    }
+
+    if (result.rateLimit) {
+      gate.block("bot", result.rateLimit.retryAfterMs);
+      logger.warn(`[chat] activity-instances limitado pelo Discord (429, ${result.rateLimit.retryAfterMs} ms)`);
+      throw new ChatCloseError(CloseCode.TRY_AGAIN_LATER, "discord_unavailable");
     }
 
     logger.warn(`[chat] activity-instances indisponível (${describeResponse(result)})`);

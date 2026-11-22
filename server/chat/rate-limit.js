@@ -25,6 +25,13 @@ export function createSlidingWindowLimiter({ limit, windowMs, now = Date.now }) 
       list.push(at);
       return { allowed: true, retryAfterMs: 0 };
     },
+    /** Consulta sem registrar: o próximo hit(key) seria aceito? */
+    peek(key) {
+      const at = now();
+      const list = prune(key, at);
+      if (list.length >= limit) return { allowed: false, retryAfterMs: Math.max(1, list[0] + windowMs - at) };
+      return { allowed: true, retryAfterMs: 0 };
+    },
     /** Remove chaves sem eventos dentro da janela (chamado periodicamente). */
     sweep() {
       const at = now();

@@ -1,5 +1,6 @@
 import { WebSocket, WebSocketServer } from "ws";
 import {
+  AUTH_FAILURE_LIMIT,
   AUTH_TIMEOUT_MS,
   CHAT_PATH,
   CloseCode,
@@ -9,10 +10,14 @@ import {
   MAX_CONNECTIONS_PER_ROOM,
   MAX_CONNECTIONS_PER_USER,
   MAX_INSTANCE_ID_LENGTH,
+  MAX_PENDING_AUTH_PER_IP,
+  MAX_PENDING_AUTH_TOTAL,
   MAX_PAYLOAD_BYTES,
   MEMBERSHIP_REVALIDATE_MS,
   MESSAGE_RATE_LIMIT,
+  UPGRADE_RATE_LIMIT,
 } from "./config.js";
+import { clientIp, TRUST_NONE } from "./client-ip.js";
 import { authenticationUnavailable, ChatCloseError } from "./errors.js";
 import { isAllowedOrigin } from "./origin.js";
 import { createMessage, parseSendFrame } from "./protocol.js";
@@ -49,6 +54,12 @@ export function attachChat(server, options = {}) {
     rooms = createRoomRegistry(),
     now = Date.now,
     logger = console,
+    // Fase 5.1: IP do cliente pela regra do TRUST_PROXY (app.get("trust proxy fn")).
+    trustProxyFn = TRUST_NONE,
+    authFailureLimit = AUTH_FAILURE_LIMIT,
+    upgradeRateLimit = UPGRADE_RATE_LIMIT,
+    maxPendingPerIp = MAX_PENDING_AUTH_PER_IP,
+    maxPendingTotal = MAX_PENDING_AUTH_TOTAL,
   } = options;
 
   const wss = new WebSocketServer({ noServer: true, maxPayload, clientTracking: true });
@@ -63,6 +74,10 @@ export function attachChat(server, options = {}) {
     maxConnectionsPerRoom,
     messageLimiter: createSlidingWindowLimiter({ ...messageRateLimit, now }),
     frameLimiter: createSlidingWindowLimiter({ ...frameRateLimit, now }),
+    authFailures: createSlidingWindowLimiter({ ...authFailureLimit, now }),
+    upgrades: createSlidingWindowLimiter({ ...upgradeRateLimit, now }),
+    pending: new Map(), // ip -> sockets ainda não autenticados
+    pendingTotal: 0,
     userConnections: new Map(), // userId -> quantidade de conexões autenticadas
   };
 
@@ -77,11 +92,23 @@ export function attachChat(server, options = {}) {
     if (!isAllowedOrigin(req.headers.origin, { discordClientId, profile: originProfile, extraOrigins })) {
       return rejectUpgrade(socket, 403, "Forbidden");
     }
-    wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+
+    // Proteção contra abuso: tudo antes de aceitar o socket, e portanto antes de
+    // qualquer chamada ao Discord. Recusas são HTTP (o navegador vê 1006 e o cliente
+    // tenta de novo com backoff).
+    const ip = clientIp(req, trustProxyFn);
+    const blocked = context.authFailures.peek(ip);
+    if (!blocked.allowed) return rejectUpgrade(socket, 429, "Too Many Requests", blocked.retryAfterMs);
+    const rate = context.upgrades.hit(ip);
+    if (!rate.allowed) return rejectUpgrade(socket, 429, "Too Many Requests", rate.retryAfterMs);
+    if ((context.pending.get(ip) ?? 0) >= maxPendingPerIp) return rejectUpgrade(socket, 429, "Too Many Requests", authTimeoutMs);
+    if (context.pendingTotal >= maxPendingTotal) return rejectUpgrade(socket, 503, "Service Unavailable", authTimeoutMs);
+
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req, ip));
   };
   server.on("upgrade", onUpgrade);
 
-  wss.on("connection", (ws) => handleConnection(ws, context));
+  wss.on("connection", (ws, _req, ip = "unknown") => handleConnection(ws, context, ip));
 
   // Heartbeat: quem não respondeu ao ping anterior é encerrado. Aproveita para limpar os limitadores.
   const heartbeat = setInterval(() => {
@@ -95,6 +122,9 @@ export function attachChat(server, options = {}) {
     }
     context.messageLimiter.sweep();
     context.frameLimiter.sweep();
+    context.authFailures.sweep();
+    context.upgrades.sweep();
+    authenticate.tokens?.sweep?.();
   }, heartbeatIntervalMs);
   heartbeat.unref?.();
 
@@ -141,7 +171,26 @@ export function attachChat(server, options = {}) {
   return { wss, close, rooms, revalidate };
 }
 
-function handleConnection(ws, context) {
+/**
+ * Fechamentos antes da autenticação que indicam erro do CLIENTE (token inválido,
+ * instância errada, protocolo). Só eles contam como falha por IP; falhas do servidor ou
+ * do Discord (auth_failed, discord_unavailable, server_misconfigured…) não contam.
+ */
+const AUTH_FAILURE_REASONS = new Set([
+  "invalid_token",
+  "auth_required",
+  "invalid_auth",
+  "invalid_json",
+  "invalid_message",
+  "binary_not_supported",
+  "auth_in_progress",
+  "invalid_instance",
+  "instance_not_found",
+  "not_in_instance",
+  "too_many_frames",
+]);
+
+function handleConnection(ws, context, ip) {
   const { authenticate, authTimeoutMs, logger, rooms, frameLimiter } = context;
 
   ws.isAlive = true;
@@ -154,9 +203,24 @@ function handleConnection(ws, context) {
   const session = { user: null, instanceId: null, authenticating: false, joined: false };
   ws.chatSession = session;
 
+  // Conta como "pendente" (não autenticado) até autenticar ou fechar.
+  context.pending.set(ip, (context.pending.get(ip) ?? 0) + 1);
+  context.pendingTotal += 1;
+  let pending = true;
+  const settlePending = () => {
+    if (!pending) return;
+    pending = false;
+    context.pendingTotal -= 1;
+    const left = (context.pending.get(ip) ?? 1) - 1;
+    if (left > 0) context.pending.set(ip, left);
+    else context.pending.delete(ip);
+  };
+
   const authTimer = setTimeout(() => closeWith(ws, CloseCode.AUTH_TIMEOUT, "auth_timeout"), authTimeoutMs);
   ws.on("close", () => {
     clearTimeout(authTimer);
+    settlePending();
+    if (!session.user && AUTH_FAILURE_REASONS.has(ws.chatCloseReason)) context.authFailures.hit(ip);
     if (session.joined) leaveRoom(ws, session, context);
   });
 
@@ -213,6 +277,7 @@ function handleConnection(ws, context) {
       // A sala é a do instanceId devolvido pelo autenticador (validado no Discord).
       session.user = result.user;
       session.instanceId = result.instanceId;
+      settlePending();
       const history = joinRoom(ws, session, context);
 
       send(ws, { type: "ready", self: publicUser(result.user) });
@@ -292,11 +357,13 @@ function send(ws, payload) {
 
 function closeWith(ws, code, reason) {
   if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+    ws.chatCloseReason = reason;
     ws.close(code, reason);
   }
 }
 
-function rejectUpgrade(socket, status, text) {
-  socket.write(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+function rejectUpgrade(socket, status, text, retryAfterMs = null) {
+  const retryAfter = retryAfterMs === null ? "" : `Retry-After: ${Math.max(1, Math.ceil(retryAfterMs / 1000))}\r\n`;
+  socket.write(`HTTP/1.1 ${status} ${text}\r\n${retryAfter}Connection: close\r\nContent-Length: 0\r\n\r\n`);
   socket.destroy();
 }

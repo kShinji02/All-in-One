@@ -68,6 +68,8 @@ const server = http.createServer(app);
 const chatAuthenticator = chatConfigured ? createDiscordAuthenticator({ applicationId: clientId, botToken }) : null;
 attachChat(server, {
   discordClientId: clientId,
+  // Mesma regra de IP do /api/token (TRUST_PROXY): X-Forwarded-For só vale vindo de proxy confiável.
+  trustProxyFn: app.get("trust proxy fn"),
   originProfile,
   extraOrigins,
   // Sem configuração completa, mantém o autenticador padrão, que recusa todas as conexões.

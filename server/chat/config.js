@@ -60,6 +60,32 @@ export const MESSAGE_RATE_LIMIT = Object.freeze({ limit: 5, windowMs: 10_000 });
 export const FRAME_RATE_LIMIT = Object.freeze({ limit: 30, windowMs: 10_000 });
 
 export const MAX_CONNECTIONS_PER_USER = 3;
+
+/**
+ * Fase 5.1 — proteção da autenticação contra abuso.
+ *
+ * A garantia principal não depende de IP: no máximo TOKEN_VALIDATION_RATE_LIMIT consultas
+ * NOVAS a /users/@me (10/s), ou 6.000 em 10 min, abaixo do limite de 10.000 requisições
+ * inválidas (401/403/429) em 10 min que leva o Discord a bloquear o IP do backend,
+ * mesmo que todas sejam inválidas. Tokens em cache (válidos ou não) não contam.
+ */
+export const TOKEN_VALIDATION_RATE_LIMIT = Object.freeze({ limit: 100, windowMs: 10_000 });
+/** Token recusado pelo Discord: novas tentativas com ele falham sem chamar o Discord. */
+export const INVALID_TOKEN_CACHE_TTL_MS = 60_000;
+export const INVALID_TOKEN_CACHE_MAX_ENTRIES = 5_000;
+/** Teto para o Retry-After de um 429 do Discord (protege contra valores absurdos). */
+export const DISCORD_MAX_RETRY_AFTER_MS = 5 * 60_000;
+/**
+ * Por IP do cliente (resolvido com TRUST_PROXY, como em /api/token):
+ * - falhas de autenticação (só falhas contam: usuários legítimos que autenticam com
+ *   sucesso atrás do mesmo IP não somam nada);
+ * - upgrades por minuto (folga para uma sala cheia reconectar de um mesmo IP);
+ * - sockets ainda não autenticados (cada um vive no máximo AUTH_TIMEOUT_MS).
+ */
+export const AUTH_FAILURE_LIMIT = Object.freeze({ limit: 20, windowMs: 5 * 60_000 });
+export const UPGRADE_RATE_LIMIT = Object.freeze({ limit: 60, windowMs: 60_000 });
+export const MAX_PENDING_AUTH_PER_IP = 50;
+export const MAX_PENDING_AUTH_TOTAL = 500;
 export const MAX_CONNECTIONS_PER_ROOM = 50;
 
 /** Revalidação periódica dos membros de cada sala (quem saiu da Activity perde o acesso). */

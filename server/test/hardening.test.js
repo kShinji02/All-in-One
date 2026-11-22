@@ -4,7 +4,7 @@ import http from "node:http";
 import { once } from "node:events";
 import { WebSocket } from "ws";
 import { createTokenValidator, tokenCacheKey } from "../chat/auth.js";
-import { CloseCode, MEMBERSHIP_REVALIDATE_MS, TOKEN_CACHE_TTL_MS } from "../chat/config.js";
+import { CloseCode, INVALID_TOKEN_CACHE_TTL_MS, MEMBERSHIP_REVALIDATE_MS, TOKEN_CACHE_TTL_MS } from "../chat/config.js";
 import { ChatCloseError } from "../chat/errors.js";
 import { attachChat } from "../chat/index.js";
 import { isAllowedOrigin, parseExtraOrigins, resolveOriginProfile } from "../chat/origin.js";
@@ -179,14 +179,21 @@ describe("cache de tokens OAuth", () => {
     assert.equal(tokens.size(), 0, "a entrada expirada saiu do cache");
   });
 
-  test("invalidação de respostas negativas: 401 nunca entra no cache (nova tentativa consulta de novo)", async () => {
+  // Fase 5.1: o 401 fica em cache negativo por INVALID_TOKEN_CACHE_TTL_MS e depois expira.
+  test("invalidação de respostas negativas: 401 fica em cache só pelo TTL curto e depois consulta de novo", async () => {
     let valid = false;
     const { fetchImpl, calls } = createFakeFetch(() => (valid ? json(200, USER_A) : json(401, { message: "401: Unauthorized" })));
-    const tokens = createTokenValidator({ fetchImpl });
+    const time = clock();
+    const tokens = createTokenValidator({ fetchImpl, now: time.now });
     await assert.rejects(tokens.validate(TOKEN_A));
     valid = true;
+    time.advance(INVALID_TOKEN_CACHE_TTL_MS - 1);
+    await assert.rejects(tokens.validate(TOKEN_A), (error) => error.reason === "invalid_token");
+    assert.equal(calls.length, 1, "dentro do TTL o Discord não é consultado");
+    time.advance(1);
     await tokens.validate(TOKEN_A);
     assert.equal(calls.length, 2);
+    assert.deepEqual(tokens.invalidKeys(), [], "a entrada vencida saiu do cache negativo");
   });
 
   test("chamadas simultâneas com o mesmo token compartilham uma única consulta", async () => {

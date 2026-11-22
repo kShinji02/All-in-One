@@ -67,13 +67,45 @@ controla, ou ajuste `TOKEN_RATE_LIMIT`. Em desenvolvimento (Vite → Express) to
 |---|---|---|---|
 | `POST /api/token` sem rate limit | Abuso podia consumir a cota OAuth da aplicação | Janela deslizante por cliente (10/min) e global (120/min); 429 com `Retry-After` e `retryAfterMs`; requisições inválidas também contam; bloqueadas não estendem o bloqueio; prazo de 10 s na chamada ao Discord | `server/app.js`; `server/test/routes.test.js` |
 | `*.trycloudflare.com` em todos os ambientes | Qualquer túnel (e subdomínios de vários níveis) era aceito também em produção | Perfis `production` / `local` / `tunnel`; o túnel só no perfil `tunnel` e com um único rótulo; Origin com caminho, consulta ou porta não padrão é recusado | `server/chat/origin.js`; `server/test/hardening.test.js` |
-| Cache de 5 min de `/users/@me` | Token revogado aceito por até 5 min em novas conexões | TTL de 60 s, igual à revalidação dos membros; respostas 401/403 não entram no cache; chave continua sendo o SHA-256 | `server/chat/config.js`; `server/test/hardening.test.js` |
+| Cache de 5 min de `/users/@me` | Token revogado aceito por até 5 min em novas conexões | TTL de 60 s, igual à revalidação dos membros; chave continua sendo o SHA-256 (desde a fase 5.1, 401/403 entram num cache negativo de 60 s — ver abaixo) | `server/chat/config.js`; `server/test/hardening.test.js` |
 | Rotas HTTP sem teste | `/api/token` e `/api/health` só eram validadas manualmente | App Express extraído para `server/app.js` (sem efeitos colaterais) e coberto com Discord simulado: sucesso, configuração ausente, parâmetros inválidos, JSON inválido, corpo grande, recusa do Discord, 5xx, falha de rede, lentidão | `server/test/routes.test.js` |
 | Log de falha de rede no OAuth | A mensagem do erro de rede era registrada (pode conter a URL) | Registra só o tipo do erro | `server/test/routes.test.js` |
 
 Uma invalidação manual do cache de tokens **não** foi criada: o Discord não notifica o servidor
 sobre revogações, então ela não teria quem a chamasse. Uma conexão do chat já autenticada não
 revalida o token; quem a encerra é a revalidação de membros (60 s) ou o próprio fechamento.
+
+## Proteção da autenticação do WebSocket (fase 5.1)
+
+Antes, cada conexão com um token falso gerava duas chamadas ao Discord (`/users/@me` com o
+token e `activity-instances` com o Bot Token), sem limite. O Discord restringe temporariamente
+o IP do servidor a partir de 10.000 respostas 401/403/429 em 10 minutos, o que derrubaria o
+chat de todos. Medição com o servidor real e o Discord simulado (300 conexões de um único
+cliente): antes 232 + 232 chamadas e 159 sockets abertos; depois 50 + 0 e no máximo 50 sockets.
+
+| Camada | Limite | Por quê |
+|---|---|---|
+| Upgrade: falhas por IP | 20 falhas do cliente em 5 min → upgrade recusado com HTTP 429 + `Retry-After` até a janela passar | Bloqueia a enxurrada de um IP **antes** de aceitar o socket. Só contam erros do cliente (`invalid_token`, instância errada, protocolo); `discord_unavailable`, `auth_timeout` e falhas do servidor não contam, para que um problema do Discord não bloqueie ninguém |
+| Upgrade: taxa por IP | 60 upgrades por minuto → HTTP 429 | Limita conexões simultâneas abertas antes de qualquer falha ser registrada |
+| Sockets não autenticados | 50 por IP e 500 no total → HTTP 429 / 503 | Cada um vive no máximo 5 s (`auth_timeout`); a vaga é liberada ao autenticar ou fechar |
+| Validações reais de token | 100 a cada 10 s no total (cache miss) → `1013 discord_unavailable` | Teto independente de IP e de token: no pior caso 6.000 chamadas em 10 min, abaixo dos 10.000 do Discord |
+| Cache negativo | 401/403 de `/users/@me` guardado por 60 s (chave: SHA-256, até 5.000 entradas) | Repetir o mesmo token inválido não chama o Discord; um token recusado não volta a ser válido |
+| Ordem das consultas | `activity-instances` (Bot Token) só depois de o token do usuário ser válido | Token falso nunca consome a cota do bot |
+| 429 do Discord | Respeita `retry_after` / `Retry-After` (teto de 5 min): global ou sem JSON (bloqueio por IP) → nenhuma validação até passar; por token → só aquele token; bot → nenhuma consulta de instância (o cache válido continua servindo) | Insistir durante um 429 é o que leva à restrição do IP |
+
+**Usuários legítimos.** Os limites por IP são altos o bastante para redes compartilhadas: 40
+usuários entrando juntos pelo mesmo IP autenticam normalmente, e algumas falhas no mesmo IP
+(abaixo de 20) não afetam ninguém. Quem já está conectado continua conversando mesmo que o
+IP seja bloqueado depois. As recusas de upgrade chegam ao navegador como `1006`, que o cliente
+trata como queda passageira (reconecta com backoff); `1013` também. Quem reconecta com um token
+já validado (cache de 60 s) não depende do teto global.
+
+**IP do cliente.** O chat usa a mesma regra do `/api/token`: `app.get("trust proxy fn")`,
+compilada a partir de `TRUST_PROXY` (`server/chat/client-ip.js`). Sem proxy confiável, o IP é o
+do socket e `X-Forwarded-For` é ignorado; com proxies confiáveis, vale o valor mais à direita
+não confiável, e o que o cliente forja à esquerda é ignorado.
+
+Evidência: `server/test/auth-abuse.test.js` (servidor real, Discord simulado, relógio injetado).
 
 ## Pontos de atenção (não são vulnerabilidades exploráveis hoje)
 
@@ -90,7 +122,12 @@ revalida o token; quem a encerra é a revalidação de membros (60 s) ou o próp
      passar a depender de `zod >= 4.6.6`.
 2. **Identificação do cliente atrás de proxies.** O limite por cliente depende de `TRUST_PROXY`
    refletir a topologia real (ver "Rate limit e proxies"). Na implantação, confira qual IP o
-   Express enxerga antes de reduzir `TOKEN_RATE_LIMIT`.
+   Express enxerga antes de reduzir `TOKEN_RATE_LIMIT`. O mesmo vale para os limites por IP do
+   WebSocket: atrás de um proxy não declarado, todos compartilham um IP, e 20 tokens inválidos
+   de qualquer usuário bloqueiam novas conexões de todos por até 5 min.
+   O teto global de validações também pode ser esgotado de propósito por muitos IPs: nesse
+   caso, quem chega com um token novo recebe `1013` e tenta de novo com backoff até a janela
+   de 10 s passar — preço aceito para nunca arriscar a restrição do IP do servidor.
 3. **Janela de revogação.** Um token revogado continua aceito em novas conexões por até 60 s
    (cache de `/users/@me`), e quem sai da instância pode continuar conectado por até 60 s.
 4. **Limites por processo.** Rate limits, caches e salas vivem em memória de um único processo;
