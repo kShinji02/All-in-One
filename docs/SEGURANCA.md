@@ -52,6 +52,12 @@ Variáveis opcionais do backend (todas com padrão seguro; nenhuma é segredo):
 | `TRUST_PROXY` | sem proxy confiável | Quantos proxies à frente do Express são confiáveis (`1`, `2`…) ou sub-rede (`loopback`, `10.0.0.0/8`). Sem isso, o IP do cliente é o do socket e `X-Forwarded-For` é ignorado. `true` é recusado |
 | `TOKEN_RATE_LIMIT` | 10 | Trocas de código OAuth por minuto, por cliente (IP) |
 | `TOKEN_GLOBAL_RATE_LIMIT` | 120 | Trocas de código OAuth por minuto, no total |
+| `PORT` | 3001 | Porta HTTP e WebSocket (o Render define a sua) |
+| `HOST` | `0.0.0.0` com `NODE_ENV=production` ou no Render; senão o padrão do Node | Interface de escuta |
+| `PROXY_DIAGNOSTICS` | desligado | `true` registra quantas entradas o `X-Forwarded-For` tem em `/api/health` (nunca os IPs), para escolher `TRUST_PROXY` |
+
+No Render, os valores recomendados e a verificação do `TRUST_PROXY` estão em
+[DEPLOY-RENDER.md](DEPLOY-RENDER.md#proxy-confiável-no-render).
 
 **Rate limit e proxies.** O IP usado no limite por cliente é `req.ip` do Express, que só lê
 `X-Forwarded-For` dos proxies declarados em `TRUST_PROXY` (o valor mais à direita não

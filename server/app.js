@@ -17,6 +17,18 @@ export const TOKEN_GLOBAL_RATE_LIMIT = Object.freeze({ limit: 120, windowMs: 60_
 export const TOKEN_EXCHANGE_TIMEOUT_MS = 10_000;
 
 /**
+ * PROXY_DIAGNOSTICS: ajuda a escolher TRUST_PROXY numa implantação nova. Registra QUANTAS
+ * entradas o X-Forwarded-For tem em /api/health (nunca os endereços), no máximo N vezes.
+ * Uma requisição feita sem X-Forwarded-For próprio mostra quantos proxies a acrescentaram.
+ */
+export const PROXY_DIAGNOSTICS_MAX_LOGS = 20;
+
+export function countForwardedFor(header) {
+  const raw = Array.isArray(header) ? header.join(",") : header ?? "";
+  return raw.split(",").filter((value) => value.trim() !== "").length;
+}
+
+/**
  * Cria o app Express (rotas HTTP). Sem efeitos colaterais: não lê o ambiente nem abre
  * portas, para que as rotas possam ser testadas com dependências controladas.
  *
@@ -36,6 +48,7 @@ export function createApp({
   tokenRateLimit = TOKEN_RATE_LIMIT,
   tokenGlobalRateLimit = TOKEN_GLOBAL_RATE_LIMIT,
   tokenExchangeTimeoutMs = TOKEN_EXCHANGE_TIMEOUT_MS,
+  proxyDiagnostics = false,
 } = {}) {
   const app = express();
   app.set("trust proxy", trustProxy);
@@ -54,7 +67,12 @@ export function createApp({
   app.use(express.json());
 
   // Verificação de disponibilidade. Não revela valores de configuração.
+  let diagnosticsLeft = proxyDiagnostics ? PROXY_DIAGNOSTICS_MAX_LOGS : 0;
   app.get("/api/health", (req, res) => {
+    if (diagnosticsLeft > 0) {
+      diagnosticsLeft -= 1;
+      logger.log(`[proxy] /api/health: X-Forwarded-For com ${countForwardedFor(req.headers["x-forwarded-for"])} entrada(s).`);
+    }
     res.send({ ok: true, oauthConfigured, chatConfigured });
   });
 

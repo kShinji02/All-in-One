@@ -16,6 +16,7 @@ Express + `ws` no backend.
 | [docs/ARQUITETURA.md](docs/ARQUITETURA.md) | Arquitetura: autenticação, chat em tempo real, reconexão, store de mensagens, Home e registro de módulos, tratamento de erros, limitações |
 | [docs/CHAT-PROTOCOL.md](docs/CHAT-PROTOCOL.md) | Protocolo do WebSocket do chat: frames, limites e códigos de fechamento |
 | [docs/SEGURANCA.md](docs/SEGURANCA.md) | Modelo de segurança e resultado da auditoria |
+| [docs/DEPLOY-RENDER.md](docs/DEPLOY-RENDER.md) | Implantação do backend no Render: comandos, variáveis de ambiente e `TRUST_PROXY` |
 
 ## Requisitos
 
@@ -105,7 +106,8 @@ sessão, os participantes e o chat ficam indisponíveis: eles dependem do Embedd
 
 | Pasta | Comando | O que faz |
 |---|---|---|
-| `server/` | `npm run dev` | Inicia o backend (`node server.js`) na porta 3001 |
+| `server/` | `npm start` | Inicia o backend (`node server.js`) na `PORT` do ambiente ou na 3001 |
+| `server/` | `npm run dev` | O mesmo que `npm start` |
 | `server/` | `npm test` | Testes do backend (`node --test`) |
 | `client/` | `npm run dev` | Vite com HMR na porta 5173 |
 | `client/` | `npm run dev:discord` | Build de produção em watch + `vite preview` na porta 5173 |
@@ -136,4 +138,5 @@ cd client && npm run build      # gera client/dist
 O backend não serve o `client/dist`: em produção, publique o build num servidor de arquivos
 estáticos com `/api` (HTTP e WebSocket) encaminhado ao backend, e mapeie esse endereço no
 URL Mapping da Activity. Inicie o backend com `NODE_ENV=production` (só o `discordsays.com`
-da aplicação é aceito no chat) e ajuste `TRUST_PROXY` aos seus proxies.
+da aplicação é aceito no chat) e ajuste `TRUST_PROXY` aos seus proxies. Para o Render, veja
+[docs/DEPLOY-RENDER.md](docs/DEPLOY-RENDER.md).

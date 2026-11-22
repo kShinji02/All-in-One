@@ -6,9 +6,13 @@ import { attachChat } from "./chat/index.js";
 import { createDiscordAuthenticator } from "./chat/authenticator.js";
 import { parseExtraOrigins, resolveOriginProfile } from "./chat/origin.js";
 import { ENV_PATH } from "./env-path.js";
+import { deploymentWarnings, describeListen, resolveListenOptions } from "./runtime-config.js";
+// Local: lê o .env da raiz. Em produção (Render) o arquivo não existe e as variáveis vêm do
+// painel do serviço; o dotenv nunca sobrescreve variáveis já definidas no ambiente.
 dotenv.config({ path: ENV_PATH });
 
-const port = 3001;
+// PORT (definida pelo Render) ou 3001; 0.0.0.0 em produção/Render (ver runtime-config.js).
+const listenOptions = resolveListenOptions(process.env);
 
 // Valores de exemplo do example.env que não são credenciais reais.
 const PLACEHOLDERS = new Set([
@@ -54,19 +58,23 @@ if (!chatConfigured) {
 // - TOKEN_RATE_LIMIT / TOKEN_GLOBAL_RATE_LIMIT: trocas de código por minuto (por cliente / total).
 // - ORIGIN_PROFILE: "production" | "local" | "tunnel" (padrão: production se NODE_ENV=production).
 // - CHAT_EXTRA_ORIGINS: origens HTTPS exatas adicionais para o WebSocket do chat.
+// - PROXY_DIAGNOSTICS=true: registra quantas entradas o X-Forwarded-For tem (sem IPs).
+// - PORT / HOST: ver runtime-config.js e docs/DEPLOY-RENDER.md.
 const trustProxy = parseTrustProxy(process.env.TRUST_PROXY);
 const tokenRateLimit = parsePerMinute(process.env.TOKEN_RATE_LIMIT, TOKEN_RATE_LIMIT, "TOKEN_RATE_LIMIT");
 const tokenGlobalRateLimit = parsePerMinute(process.env.TOKEN_GLOBAL_RATE_LIMIT, TOKEN_GLOBAL_RATE_LIMIT, "TOKEN_GLOBAL_RATE_LIMIT");
 const originProfile = resolveOriginProfile(process.env);
 const extraOrigins = parseExtraOrigins(process.env.CHAT_EXTRA_ORIGINS);
 console.log(`[config] Origens do chat: perfil "${originProfile}"${extraOrigins.length ? ` + ${extraOrigins.length} extra(s)` : ""}.`);
+for (const warning of deploymentWarnings(process.env)) console.warn(`[config] ${warning}`);
 
-const app = createApp({ clientId, clientSecret, chatConfigured, fetchImpl: fetch, trustProxy, tokenRateLimit, tokenGlobalRateLimit });
+const proxyDiagnostics = process.env.PROXY_DIAGNOSTICS?.trim() === "true";
+const app = createApp({ clientId, clientSecret, chatConfigured, fetchImpl: fetch, trustProxy, tokenRateLimit, tokenGlobalRateLimit, proxyDiagnostics });
 
 // Servidor HTTP explícito para que o WebSocket do chat compartilhe a mesma porta.
 const server = http.createServer(app);
 const chatAuthenticator = chatConfigured ? createDiscordAuthenticator({ applicationId: clientId, botToken }) : null;
-attachChat(server, {
+const chat = attachChat(server, {
   discordClientId: clientId,
   // Mesma regra de IP do /api/token (TRUST_PROXY): X-Forwarded-For só vale vindo de proxy confiável.
   trustProxyFn: app.get("trust proxy fn"),
@@ -81,6 +89,16 @@ attachChat(server, {
   }),
 });
 
-server.listen(port, () => {
-  console.log(`Server listening at http://localhost:${port}`);
+server.listen(listenOptions.port, listenOptions.host, () => {
+  console.log(`Server listening on ${describeListen(listenOptions)}`);
 });
+
+// O Render envia SIGTERM ao parar ou reimplantar: encerra o chat e o HTTP de forma limpa.
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.once(signal, () => {
+    console.log(`[server] ${signal} recebido; encerrando.`);
+    chat.close();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5_000).unref();
+  });
+}

@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
  */
 
 const root = path.resolve(process.cwd(), '..');
-const DOCS = ['README.md', 'docs/TESTE-NO-DISCORD.md', 'docs/ARQUITETURA.md', 'docs/CHAT-PROTOCOL.md', 'docs/SEGURANCA.md'];
+const DOCS = ['README.md', 'docs/TESTE-NO-DISCORD.md', 'docs/ARQUITETURA.md', 'docs/CHAT-PROTOCOL.md', 'docs/SEGURANCA.md', 'docs/DEPLOY-RENDER.md'];
 const read = (file: string) => readFileSync(path.join(root, file), 'utf8');
 const scripts = (pkg: string) => Object.keys((JSON.parse(read(pkg)) as { scripts: Record<string, string> }).scripts);
 
