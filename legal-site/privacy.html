@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Política de Privacidade — All-in-One</title>
+    <meta name="description" content="Como a Activity All-in-One para Discord trata os seus dados." />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="index.html">All-in-One</a>
+      <nav class="site-nav" aria-label="Documentos">
+        <a href="index.html">Início</a>
+        <a href="terms.html">Termos de Uso</a>
+        <a href="privacy.html" aria-current="page">Política de Privacidade</a>
+      </nav>
+    </header>
+
+    <main>
+      <!-- RASCUNHO: remover este aviso somente quando todas as marcações "PENDENTE" forem resolvidas. -->
+      <p class="draft-notice" role="note">
+        <strong>Documento em preparação, ainda não publicado.</strong> Os trechos destacados
+        dependem de definição ou de validação jurídica. Este texto não foi revisado por um
+        profissional do direito.
+      </p>
+
+      <h1>Política de Privacidade</h1>
+      <p class="meta">
+        Última atualização:
+        <!-- Na publicação: preencher com a data, ex.: <time datetime="AAAA-MM-DD">DD de mês de AAAA</time> -->
+        <span class="fill">[PENDENTE: data a ser definida no momento da publicação]</span>
+      </p>
+
+      <p>
+        Esta política explica quais dados a Activity <strong>All-in-One</strong> (“All-in-One”,
+        “Activity”) trata quando você a usa dentro do Discord, para quê, por quanto tempo e com
+        quem eles são compartilhados. O All-in-One é gratuito, não exibe anúncios e não vende dados.
+      </p>
+
+      <h2>1. Responsável</h2>
+      <p>
+        O All-in-One é um projeto pessoal, gratuito e sem anúncios, mantido por uma pessoa
+        física, que é a responsável pelo tratamento dos dados descrito nesta política.
+        “All-in-One” é o nome público do projeto; ele não é uma empresa nem uma pessoa jurídica.
+      </p>
+      <p>
+        Contato para privacidade e para solicitações sobre os seus dados:
+        <a href="mailto:luanr6619@gmail.com">luanr6619@gmail.com</a>.
+      </p>
+      <p>
+        <span class="fill">[PENDENTE DE VALIDAÇÃO JURÍDICA: confirmar se a identificação pública do controlador apenas pelo nome do projeto e pelo e-mail de contato é suficiente, ou se outros dados de identificação do responsável devem constar nesta política]</span>
+      </p>
+
+      <h2>2. Dados tratados</h2>
+
+      <h3>2.1 Autorização do Discord (OAuth2)</h3>
+      <p>
+        Ao abrir a Activity, o Discord pede a sua autorização para os escopos
+        <code>identify</code> e <code>guilds</code>. O código de autorização gerado pelo Discord é
+        enviado ao servidor do All-in-One, que o troca por um token de acesso junto ao Discord.
+      </p>
+      <ul>
+        <li>
+          O token de acesso fica <strong>somente na memória</strong> da página da Activity no seu
+          dispositivo. Ele não é gravado no navegador (nem em cookies, nem em armazenamento local)
+          e não é guardado em banco de dados.
+        </li>
+        <li>
+          Quando você entra no chat, o servidor valida o token no Discord e mantém em memória,
+          por até 60 segundos, um resumo criptográfico (hash SHA-256) do token associado à sua
+          identidade, para não repetir a consulta. O token em si não é guardado.
+        </li>
+        <li>
+          Se o Discord recusar um token, o resumo (hash) desse token fica em memória por até 60
+          segundos, para bloquear repetições abusivas.
+        </li>
+      </ul>
+
+      <h3>2.2 Identidade do Discord (escopo <code>identify</code>)</h3>
+      <p>
+        Recebemos do Discord o seu <strong>ID de usuário, nome de usuário, nome de exibição e
+        endereço do avatar</strong>. Eles servem para identificar você como autor das suas
+        mensagens no chat e para mostrar quem é você na interface. Não recebemos o seu e-mail nem
+        o seu número de telefone.
+      </p>
+
+      <h3>2.3 Servidores (escopo <code>guilds</code>)</h3>
+      <p>
+        O escopo <code>guilds</code> é exigido pelo Discord para identificar o canal em que a
+        Activity está aberta. A lista dos seus servidores é consultada <strong>diretamente pelo
+        seu dispositivo</strong> no Discord, apenas para exibir o nome e o ícone do servidor
+        atual. Essa lista não é enviada ao servidor do All-in-One.
+      </p>
+
+      <h3>2.4 Participantes da Activity</h3>
+      <p>
+        A lista de participantes é obtida pelo seu dispositivo através do SDK do Discord e
+        exibida na interface. Para impedir que pessoas de fora entrem no chat de uma instância,
+        o servidor consulta no Discord quem está naquela instância da Activity e mantém essa
+        lista em memória por até 20 segundos, repetindo a verificação a cada 60 segundos.
+      </p>
+
+      <h3>2.5 Mensagens do chat</h3>
+      <p>
+        Cada mensagem enviada contém o texto (até 500 caracteres), os dados de autor descritos no
+        item 2.2, a data e hora de envio e identificadores técnicos usados para evitar duplicação.
+      </p>
+      <ul>
+        <li>
+          As mensagens são visíveis para todas as pessoas que estiverem na mesma instância da
+          Activity, inclusive quem entrar depois, enquanto a mensagem estiver no histórico.
+        </li>
+        <li>
+          Elas ficam <strong>apenas na memória</strong> do servidor, no máximo as 100 mensagens
+          mais recentes de cada instância. Não há banco de dados nem cópia de segurança.
+        </li>
+        <li>
+          O histórico é apagado quando a instância fica 10 minutos sem ninguém conectado ao chat,
+          ou quando o servidor é reiniciado. Mensagens mais antigas que as 100 últimas são
+          descartadas.
+        </li>
+        <li>
+          As mensagens do All-in-One não são mensagens do Discord: elas não aparecem nos canais
+          do Discord e não podem ser recuperadas depois de apagadas.
+        </li>
+      </ul>
+
+      <h3>2.6 Endereço IP e dados técnicos</h3>
+      <p>
+        O servidor usa o endereço IP de quem se conecta, em memória e por poucos minutos (até 5
+        minutos), para limitar tentativas abusivas de conexão e de autenticação. O All-in-One não
+        grava endereços IP, tokens, textos de mensagens nem links em seus registros (logs); os
+        registros contêm apenas códigos e tipos de erro.
+      </p>
+      <p>
+        A infraestrutura em que o servidor é executado pode manter registros técnicos próprios
+        (por exemplo, de acesso), que podem incluir o endereço IP e o horário da conexão.
+        <span class="fill">[PENDENTE — hospedagem de produção ainda não definida: informar o provedor, o país ou a região do servidor, quais registros ele mantém e por quanto tempo; se o servidor ficar fora do Brasil, informar a transferência internacional de dados]</span>
+      </p>
+
+      <h2>3. O que o All-in-One não faz</h2>
+      <ul>
+        <li>Não exibe anúncios e não vende, aluga ou cede dados pessoais.</li>
+        <li>Não usa cookies próprios, ferramentas de análise (analytics) nem rastreamento.</li>
+        <li>Não cria perfis de comportamento nem toma decisões automatizadas sobre você.</li>
+        <li>Não acessa mensagens dos canais do Discord, sua lista de amigos, e-mail ou telefone.</li>
+      </ul>
+
+      <h2>4. Finalidades</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Dado</th>
+              <th>Finalidade</th>
+              <th>Por quanto tempo</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Token de acesso</td>
+              <td>Autenticar você no Discord e no chat</td>
+              <td>Enquanto a Activity estiver aberta (só no seu dispositivo); hash no servidor por até 60 s</td>
+            </tr>
+            <tr>
+              <td>ID, nome de usuário, nome de exibição, avatar</td>
+              <td>Identificar o autor das mensagens e exibir o seu perfil</td>
+              <td>Junto com as mensagens (item 2.5); cache de validação por até 60 s</td>
+            </tr>
+            <tr>
+              <td>Membros da instância</td>
+              <td>Garantir que só participantes da instância usem o chat dela</td>
+              <td>Até 20 s em memória</td>
+            </tr>
+            <tr>
+              <td>Mensagens do chat</td>
+              <td>Entregar o chat às pessoas da instância</td>
+              <td>Até 100 por instância; apagadas após 10 min sem conexões ou ao reiniciar o servidor</td>
+            </tr>
+            <tr>
+              <td>Endereço IP</td>
+              <td>Proteção contra abuso (limites de conexão e de autenticação)</td>
+              <td>Até 5 min em memória</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>5. Compartilhamento</h2>
+      <ul>
+        <li>
+          <strong>Discord:</strong> a Activity funciona dentro do Discord e consulta a API do
+          Discord para autenticação, identidade e participantes. O tratamento feito pelo próprio
+          Discord segue a
+          <a href="https://discord.com/privacy" rel="noopener noreferrer">Política de Privacidade do Discord</a>.
+        </li>
+        <li>
+          <strong>Outros participantes:</strong> as suas mensagens e o seu perfil (nome e avatar)
+          ficam visíveis para quem estiver na mesma instância da Activity.
+        </li>
+        <li>
+          <strong>Hospedagem:</strong> o servidor do All-in-One é executado em infraestrutura de
+          terceiros, que processa as conexões e pode manter registros técnicos (item 2.6).
+          <span class="fill">[PENDENTE — hospedagem de produção ainda não definida: nomear o provedor e indicar a sua política de privacidade]</span>
+        </li>
+        <li>
+          <strong>Autoridades:</strong> somente quando exigido por lei ou ordem judicial, e apenas
+          com os dados que ainda existirem no momento do pedido.
+        </li>
+      </ul>
+
+      <h2>6. Segurança</h2>
+      <p>
+        As conexões usam HTTPS e WebSocket seguro (WSS) por meio da infraestrutura do Discord. O
+        servidor verifica a origem das conexões do chat, valida a identidade de cada usuário no
+        Discord, não guarda tokens em texto e aplica limites contra abuso. Nenhum sistema é
+        totalmente imune a falhas; por isso evite enviar no chat informações sensíveis, como
+        senhas ou documentos.
+      </p>
+
+      <h2>7. Seus direitos</h2>
+      <p>
+        Você pode pedir confirmação de tratamento, acesso, correção ou eliminação dos seus dados,
+        e tirar dúvidas, pelo e-mail
+        <a href="mailto:luanr6619@gmail.com">luanr6619@gmail.com</a>, inclusive nos termos da Lei
+        Geral de Proteção de Dados (Lei nº 13.709/2018). Como os dados do All-in-One ficam apenas
+        em memória e por pouco tempo, pode não haver mais dados seus quando o pedido for
+        analisado. Você também pode encerrar o tratamento a qualquer momento fechando a Activity
+        e removendo a autorização do aplicativo em <em>Configurações do Discord → Aplicativos
+        autorizados</em>.
+      </p>
+
+      <h2>8. Crianças e adolescentes</h2>
+      <p>
+        O All-in-One só pode ser usado por quem atende à idade mínima exigida pelo Discord no seu
+        país. Não coletamos intencionalmente dados além dos descritos nesta política.
+      </p>
+
+      <h2>9. Alterações</h2>
+      <p>
+        Esta política pode ser atualizada quando o funcionamento do All-in-One mudar. A data da
+        última atualização fica no topo desta página.
+      </p>
+
+      <h2>10. Contato</h2>
+      <p><a href="mailto:luanr6619@gmail.com">luanr6619@gmail.com</a></p>
+    </main>
+
+    <footer class="site-footer">
+      <p>
+        <a href="terms.html">Termos de Uso</a> · <a href="index.html">Início</a><br />
+        All-in-One não é afiliado, patrocinado nem endossado pelo Discord.
+      </p>
+    </footer>
+  </body>
+</html>
