@@ -1,13 +1,11 @@
 # Publica legal-site/ no GitHub Pages.
 # Pré-requisito: Settings → Pages → Build and deployment → Source: "GitHub Actions".
+#
+# Somente manual (Actions → "Publicar documentos legais" → Run workflow): os documentos
+# ainda são rascunhos e não podem ser publicados automaticamente por um push.
 name: Publicar documentos legais
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "legal-site/**"
-      - ".github/workflows/legal-site.yml"
   workflow_dispatch:
 
 permissions:
