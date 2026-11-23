@@ -15,10 +15,19 @@ import { createRetryGate } from "./discord-api.js";
  *
  * A identidade (id, nome, avatar) vem exclusivamente das respostas do Discord.
  */
-export function createDiscordAuthenticator({ applicationId, botToken, fetchImpl, now, logger, tokenOptions = {}, instanceOptions = {} }) {
+export function createDiscordAuthenticator({
+  applicationId,
+  botToken,
+  fetchImpl,
+  now,
+  logger,
+  tokenOptions = {},
+  instanceOptions = {},
+  // Compartilhados com outras rotas (ex.: /api/legal), para usar o mesmo cache e os mesmos tetos.
+  gate = createRetryGate({ now }),
+  tokens = createTokenValidator({ fetchImpl, now, logger, gate, ...tokenOptions }),
+}) {
   // Um único registro de bloqueios (429) para as duas consultas.
-  const gate = createRetryGate({ now });
-  const tokens = createTokenValidator({ fetchImpl, now, logger, gate, ...tokenOptions });
   const instances = createInstanceVerifier({ applicationId, botToken, fetchImpl, now, logger, gate, ...instanceOptions });
 
   async function authenticate({ accessToken, instanceId }) {

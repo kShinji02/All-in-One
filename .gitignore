@@ -16,6 +16,8 @@ node_modules
 node_modules
 dist
 dist-ssr
+# Estado local do Wrangler (npm run cf:dev / cf:deploy)
+.wrangler
 *.local
 
 # Editor directories and files

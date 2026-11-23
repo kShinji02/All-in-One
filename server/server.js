@@ -3,9 +3,13 @@ import dotenv from "dotenv";
 import fetch from "node-fetch";
 import { createApp, parsePerMinute, parseTrustProxy, TOKEN_GLOBAL_RATE_LIMIT, TOKEN_RATE_LIMIT } from "./app.js";
 import { attachChat } from "./chat/index.js";
+import { createTokenValidator } from "./chat/auth.js";
 import { createDiscordAuthenticator } from "./chat/authenticator.js";
+import { createRetryGate } from "./chat/discord-api.js";
 import { parseExtraOrigins, resolveOriginProfile } from "./chat/origin.js";
 import { ENV_PATH } from "./env-path.js";
+import { describeDbError } from "./db/pool.js";
+import { createLegalSetup } from "./legal/setup.js";
 import { deploymentWarnings, describeListen, resolveListenOptions } from "./runtime-config.js";
 // Local: lê o .env da raiz. Em produção (Render) o arquivo não existe e as variáveis vêm do
 // painel do serviço; o dotenv nunca sobrescreve variáveis já definidas no ambiente.
@@ -68,13 +72,38 @@ const extraOrigins = parseExtraOrigins(process.env.CHAT_EXTRA_ORIGINS);
 console.log(`[config] Origens do chat: perfil "${originProfile}"${extraOrigins.length ? ` + ${extraOrigins.length} extra(s)` : ""}.`);
 for (const warning of deploymentWarnings(process.env)) console.warn(`[config] ${warning}`);
 
+// Validação de tokens OAuth (/users/@me) compartilhada pelo chat e pelas rotas /api/legal:
+// mesmo cache, mesmo cache negativo e mesmo teto de chamadas ao Discord.
+const retryGate = createRetryGate();
+const tokens = createTokenValidator({ gate: retryGate });
+
+// Aceite dos Termos de Uso / ciência da Política de Privacidade (DATABASE_URL; ver docs/ACEITE-LEGAL.md).
+const legal = createLegalSetup({ env: process.env, validateToken: (token) => tokens.validate(token) });
+// Prepara o schema já na inicialização; se o banco estiver fora, tenta de novo na primeira operação.
+if (legal.store.kind === "postgres") {
+  legal.store.ready().catch((error) => console.warn(`[db] schema não preparado na inicialização (${describeDbError(error)}).`));
+}
+
 const proxyDiagnostics = process.env.PROXY_DIAGNOSTICS?.trim() === "true";
-const app = createApp({ clientId, clientSecret, chatConfigured, fetchImpl: fetch, trustProxy, tokenRateLimit, tokenGlobalRateLimit, proxyDiagnostics });
+const app = createApp({
+  clientId,
+  clientSecret,
+  chatConfigured,
+  fetchImpl: fetch,
+  trustProxy,
+  tokenRateLimit,
+  tokenGlobalRateLimit,
+  proxyDiagnostics,
+  legalRouter: legal.router,
+  legalStore: legal.store.kind,
+});
 
 // Servidor HTTP explícito para que o WebSocket do chat compartilhe a mesma porta.
 const server = http.createServer(app);
-const chatAuthenticator = chatConfigured ? createDiscordAuthenticator({ applicationId: clientId, botToken }) : null;
+const chatAuthenticator = chatConfigured ? createDiscordAuthenticator({ applicationId: clientId, botToken, gate: retryGate, tokens }) : null;
 const chat = attachChat(server, {
+  // O chat só libera a sala para quem aceitou as versões atuais dos documentos (verificado no servidor).
+  requireLegalAcceptance: legal.gate.requireAccepted,
   discordClientId: clientId,
   // Mesma regra de IP do /api/token (TRUST_PROXY): X-Forwarded-For só vale vindo de proxy confiável.
   trustProxyFn: app.get("trust proxy fn"),
@@ -98,7 +127,8 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
   process.once(signal, () => {
     console.log(`[server] ${signal} recebido; encerrando.`);
     chat.close();
-    server.close(() => process.exit(0));
+    legal.router.close();
+    server.close(() => legal.store.close().finally(() => process.exit(0)));
     setTimeout(() => process.exit(0), 5_000).unref();
   });
 }

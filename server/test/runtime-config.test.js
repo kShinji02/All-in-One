@@ -127,9 +127,24 @@ const FAKE = Object.freeze({
   VITE_DISCORD_CLIENT_ID: "123456789012345678",
   DISCORD_CLIENT_SECRET: "fake-client-secret-never-logged",
   DISCORD_BOT_TOKEN: "fake-bot-token-never-logged",
+  // Produção exige DATABASE_URL com TLS. Este banco não existe (porta 1): o servidor inicia,
+  // o schema não fica pronto e os aceites respondem "indisponível", sem afetar estes testes.
+  DATABASE_URL: "postgresql://fake-user:fake-db-password-never-logged@127.0.0.1:1/neondb?sslmode=require",
 });
 
-const DEPLOY_KEYS = ["NODE_ENV", "RENDER", "PORT", "HOST", "TRUST_PROXY", "ORIGIN_PROFILE", "CHAT_EXTRA_ORIGINS", "TOKEN_RATE_LIMIT", "TOKEN_GLOBAL_RATE_LIMIT", "PROXY_DIAGNOSTICS"];
+const DEPLOY_KEYS = [
+  "NODE_ENV",
+  "RENDER",
+  "PORT",
+  "HOST",
+  "TRUST_PROXY",
+  "ORIGIN_PROFILE",
+  "CHAT_EXTRA_ORIGINS",
+  "TOKEN_RATE_LIMIT",
+  "TOKEN_GLOBAL_RATE_LIMIT",
+  "PROXY_DIAGNOSTICS",
+  "LEGAL_STORE",
+];
 
 async function freePort() {
   const probe = net.createServer().listen(0, "127.0.0.1");
@@ -176,12 +191,13 @@ describe("server.js em modo de produção (Render)", () => {
       await server.waitFor(new RegExp(`Server listening on 0\\.0\\.0\\.0:${port}`));
       const response = await fetch(`http://127.0.0.1:${port}/api/health`);
       assert.equal(response.status, 200);
-      assert.deepEqual(await response.json(), { ok: true, oauthConfigured: true, chatConfigured: true });
+      assert.deepEqual(await response.json(), { ok: true, oauthConfigured: true, chatConfigured: true, legalStore: "postgres" });
 
       const output = server.output();
       assert.match(output, /perfil "production"/);
+      assert.match(output, /Aceites legais: PostgreSQL em 127\.0\.0\.1 \(TLS\)/);
       assert.doesNotMatch(output, /\[config\] TRUST_PROXY não definido/);
-      for (const secret of [FAKE.DISCORD_CLIENT_SECRET, FAKE.DISCORD_BOT_TOKEN]) {
+      for (const secret of [FAKE.DISCORD_CLIENT_SECRET, FAKE.DISCORD_BOT_TOKEN, "fake-db-password-never-logged", "fake-user"]) {
         assert.ok(!output.includes(secret), "segredo não aparece no log");
       }
     } finally {

@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
  */
 
 const root = path.resolve(process.cwd(), '..');
-const DOCS = ['README.md', 'docs/TESTE-NO-DISCORD.md', 'docs/ARQUITETURA.md', 'docs/CHAT-PROTOCOL.md', 'docs/SEGURANCA.md', 'docs/DEPLOY-RENDER.md'];
+const DOCS = ['README.md', 'docs/TESTE-NO-DISCORD.md', 'docs/ARQUITETURA.md', 'docs/CHAT-PROTOCOL.md', 'docs/SEGURANCA.md', 'docs/DEPLOY-RENDER.md', 'docs/ACEITE-LEGAL.md', 'docs/DEPLOY-CLOUDFLARE.md'];
 const read = (file: string) => readFileSync(path.join(root, file), 'utf8');
 const scripts = (pkg: string) => Object.keys((JSON.parse(read(pkg)) as { scripts: Record<string, string> }).scripts);
 
@@ -92,5 +92,40 @@ describe('documentação', () => {
     expect(protocol).toContain('3 por usuário, 50 por sala');
     expect(config.AUTH_TIMEOUT_MS).toBe(5_000);
     expect(config.HISTORY_LIMIT).toBe(100);
+  });
+
+  it('M3: o guia de teste explica o armazenamento dos aceites e lista todos os erros da sessão', async () => {
+    const guide = read('docs/TESTE-NO-DISCORD.md');
+    for (const term of ['DATABASE_URL', 'LEGAL_STORE=memory', 'acceptance_unavailable', '"legalStore":"memory"', '"legalStore":"postgres"', '"legalStore":"unavailable"']) {
+      expect(guide, term).toContain(term);
+    }
+    // Opções aceitas pelo servidor e recusa em produção, como em server/db/config.js.
+    const db = (await import(/* @vite-ignore */ new URL('../../../server/db/config.js', import.meta.url).href)) as {
+      resolveAcceptanceStoreKind: (env: Record<string, string>, config: unknown) => string;
+    };
+    expect(db.resolveAcceptanceStoreKind({ LEGAL_STORE: 'memory' }, null)).toBe('memory');
+    expect(db.resolveAcceptanceStoreKind({}, null)).toBe('unavailable');
+    expect(db.resolveAcceptanceStoreKind({ LEGAL_STORE: 'postgres' }, null)).toBe('unavailable');
+    expect(() => db.resolveAcceptanceStoreKind({ LEGAL_STORE: 'memory', NODE_ENV: 'production' }, null)).toThrow();
+    expect(guide).toMatch(/LEGAL_STORE=postgres` sem `DATABASE_URL`/);
+    expect(guide).toMatch(/Recusado\*\* com `NODE_ENV=production`/);
+
+    // Cada código de DiscordErrorCode aparece na tabela de diagnóstico.
+    const errors = read('client/src/discord/errors.ts');
+    const union = /export type DiscordErrorCode =([^;]+);/.exec(errors)![1]!;
+    const codes = [...union.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!);
+    expect(codes).toContain('backend_timeout');
+    for (const code of codes) expect(guide, code).toMatch(new RegExp(`\| \`${code}`));
+
+    // Prazos citados batem com o código.
+    const { HTTP_TIMEOUTS } = await import('@/lib/http');
+    expect(guide).toContain(`${HTTP_TIMEOUTS.tokenExchange / 1000} s para a troca do código`);
+    expect(guide).toContain(`${HTTP_TIMEOUTS.legal / 1000} s para a verificação e o registro do aceite`);
+    expect(guide).toContain(`${HTTP_TIMEOUTS.optional / 1000} s para o nome do`);
+  });
+
+  it('B1: protocolo e segurança citam o motivo próprio do limite por conta', () => {
+    expect(read('docs/CHAT-PROTOCOL.md')).toContain('`too_many_auth_attempts`');
+    expect(read('docs/SEGURANCA.md')).toContain('30/min → `4029 too_many_auth_attempts`');
   });
 });

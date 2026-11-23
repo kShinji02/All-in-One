@@ -39,6 +39,13 @@ export function describeChatStatus({ connectionState, isReady, isLoading, error 
         );
       case 'limit':
         return stopped('Limite de conexões', 'Há conexões demais com o chat. Feche outras janelas da Activity e tente de novo.', 'reconnect', false);
+      case 'auth_rate_limited':
+        return stopped(
+          'Muitas tentativas',
+          'Sua conta tentou entrar no chat muitas vezes em pouco tempo. Aguarde um minuto e toque em Reconectar.',
+          'reconnect',
+          false,
+        );
       case 'unavailable':
         return stopped('Chat indisponível', 'O servidor não está configurado para o chat no momento.', 'reconnect', true);
       case 'retries_exhausted':
@@ -52,6 +59,13 @@ export function describeChatStatus({ connectionState, isReady, isLoading, error 
         return stopped('Erro de comunicação', 'O servidor recusou a conexão do chat. Tente reconectar.', 'reconnect', false);
       case 'client_closed':
         return stopped('Conexão encerrada', 'A conexão com o chat foi encerrada.', 'reconnect', false);
+      case 'legal_required':
+        return stopped(
+          'Aceite necessário',
+          'Os Termos de Uso ou a Política de Privacidade foram atualizados. Revise e aceite para voltar ao chat.',
+          'reload',
+          true,
+        );
     }
   }
 

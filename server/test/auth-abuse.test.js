@@ -19,7 +19,7 @@ import { clientIp, TRUST_NONE } from "../chat/client-ip.js";
 import { createRetryGate, parseRateLimit } from "../chat/discord-api.js";
 import { createSlidingWindowLimiter } from "../chat/rate-limit.js";
 import {
-  AUTH_FAILURE_LIMIT,
+  AUTH_FAILURE_LIMIT as DEFAULT_AUTH_FAILURE_LIMIT,
   CloseCode,
   DISCORD_MAX_RETRY_AFTER_MS,
   MAX_PENDING_AUTH_PER_IP,
@@ -29,6 +29,14 @@ import {
 import { APP_ID, BOT_TOKEN, captureLogger, createFakeFetch, INSTANCE_1, json } from "./helpers/fake-discord.js";
 
 const ORIGIN = "http://localhost:5173";
+/*
+ * Estes testes exercitam cada MECANISMO isoladamente, com limites pequenos para rodarem rápido:
+ * 20 falhas por IP e um teto de validações alto o bastante para não interferir. Os valores
+ * PADRÃO (200 falhas, 100 validações/10 s) e os cenários com IP compartilhado ficam em
+ * test/shared-ip-limits.test.js.
+ */
+const AUTH_FAILURE_LIMIT = Object.freeze({ limit: 20, windowMs: DEFAULT_AUTH_FAILURE_LIMIT.windowMs });
+const NO_VALIDATION_CAP = Object.freeze({ limit: 100_000, windowMs: 10_000 });
 const servers = [];
 
 /** Função de confiança compilada pelo Express, a mesma que server.js passa ao chat. */
@@ -72,9 +80,16 @@ const botCalls = (calls) => calls.filter((c) => c.authorization?.startsWith("Bot
 
 async function startServer({ fetchImpl, time = clock(), chatOptions = {}, tokenOptions = {} }) {
   const { logger } = captureLogger();
-  const authenticate = createDiscordAuthenticator({ applicationId: APP_ID, botToken: BOT_TOKEN, fetchImpl, now: time.now, logger, tokenOptions });
+  const authenticate = createDiscordAuthenticator({
+    applicationId: APP_ID,
+    botToken: BOT_TOKEN,
+    fetchImpl,
+    now: time.now,
+    logger,
+    tokenOptions: { validationRateLimit: NO_VALIDATION_CAP, ...tokenOptions },
+  });
   const server = http.createServer();
-  const chat = attachChat(server, { authenticate, now: time.now, logger, authTimeoutMs: 2_000, ...chatOptions });
+  const chat = attachChat(server, { authenticate, now: time.now, logger, authTimeoutMs: 2_000, authFailureLimit: AUTH_FAILURE_LIMIT, ...chatOptions });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   servers.push({ server, chat });
@@ -203,7 +218,7 @@ describe("vários IPs e o teto global", () => {
 
   test("alternar IPs e tokens inválidos nunca passa do teto global de validações", async () => {
     const { fetchImpl, calls } = fakeDiscord();
-    const { url, chat } = await startServer({ fetchImpl, chatOptions: behindProxy });
+    const { url, chat } = await startServer({ fetchImpl, chatOptions: behindProxy, tokenOptions: { validationRateLimit: TOKEN_VALIDATION_RATE_LIMIT } });
     const ips = TOKEN_VALIDATION_RATE_LIMIT.limit + 50;
     const results = await sequential(ips, url, chat, (i) => ({ token: `falso-${i}`, xff: `198.51.100.${i % 250}, 10.0.${i >> 8}.${i & 255}` }));
 

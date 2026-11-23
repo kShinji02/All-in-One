@@ -1,0 +1,18 @@
+# Cabeçalhos da hospedagem na Cloudflare (Workers Static Assets). Lido pela Cloudflare,
+# não é servido como arquivo. Ignorado pelo Vite local e pelo Quick Tunnel.
+#
+# NÃO adicione X-Frame-Options nem "frame-ancestors": a Activity roda num iframe do Discord.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+
+# Arquivos com hash no nome (gerados pelo Vite): podem ficar em cache para sempre.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# A página sempre é revalidada, para que um novo deploy chegue na próxima abertura.
+/
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache

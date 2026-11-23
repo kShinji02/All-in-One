@@ -5,6 +5,7 @@ export type DiscordErrorCode =
   | 'server_misconfigured'
   | 'token_exchange_failed'
   | 'backend_unreachable'
+  | 'backend_timeout'
   | 'authenticate_failed';
 
 const messages: Record<DiscordErrorCode, string> = {
@@ -18,6 +19,8 @@ const messages: Record<DiscordErrorCode, string> = {
   token_exchange_failed: 'O servidor não conseguiu trocar o código de autorização por um token.',
   backend_unreachable:
     'O servidor da aplicação (/api) não está respondendo. Inicie o backend com "npm run dev" na pasta server/ e tente novamente.',
+  backend_timeout:
+    'O servidor da aplicação demorou para responder; ele pode estar sendo iniciado, o que leva até um minuto. Aguarde alguns segundos e tente novamente.',
   authenticate_failed: 'O Discord recusou a autenticação com o token obtido.',
 };
 

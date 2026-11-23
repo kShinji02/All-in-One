@@ -42,7 +42,9 @@ describe('compatibilidade estática com o código do servidor', () => {
 
   beforeAll(async () => {
     config = await importServer<ServerConfig>('config.js');
-    serverSources = (await Promise.all(['index.js', 'protocol.js', 'auth.js', 'instances.js', 'authenticator.js', 'errors.js'].map(source))).join('\n');
+    serverSources = (
+      await Promise.all(['index.js', 'protocol.js', 'auth.js', 'instances.js', 'authenticator.js', 'errors.js', '../legal/gate.js'].map(source))
+    ).join('\n');
   });
 
   it('limites iguais aos de server/chat/config.js', () => {
@@ -73,7 +75,7 @@ describe('compatibilidade estática com o código do servidor', () => {
     }
     const clientPairs = Object.fromEntries(Object.entries(SERVER_CLOSE_REASONS).map(([reason, { code }]) => [reason, code]));
     expect(Object.fromEntries(pairs)).toEqual(clientPairs);
-    expect(pairs.size).toBe(18);
+    expect(pairs.size).toBe(21);
   });
 });
 

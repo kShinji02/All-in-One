@@ -50,8 +50,8 @@ Variáveis opcionais do backend (todas com padrão seguro; nenhuma é segredo):
 | `ORIGIN_PROFILE` | `production` se `NODE_ENV=production`; senão `tunnel` | Origens aceitas no WebSocket do chat: `production` (só `https://<client_id>.discordsays.com`), `local` (+ localhost), `tunnel` (+ `https://<subdomínio>.trycloudflare.com`, um único rótulo) |
 | `CHAT_EXTRA_ORIGINS` | vazio | Origens HTTPS **exatas** adicionais, separadas por vírgula (sem curingas) |
 | `TRUST_PROXY` | sem proxy confiável | Quantos proxies à frente do Express são confiáveis (`1`, `2`…) ou sub-rede (`loopback`, `10.0.0.0/8`). Sem isso, o IP do cliente é o do socket e `X-Forwarded-For` é ignorado. `true` é recusado |
-| `TOKEN_RATE_LIMIT` | 10 | Trocas de código OAuth por minuto, por cliente (IP) |
-| `TOKEN_GLOBAL_RATE_LIMIT` | 120 | Trocas de código OAuth por minuto, no total |
+| `TOKEN_RATE_LIMIT` | 120 | Trocas de código OAuth por minuto, por cliente (IP); alto porque o proxy do Discord faz muitos usuários compartilharem um IP |
+| `TOKEN_GLOBAL_RATE_LIMIT` | 240 | Trocas de código OAuth por minuto, no total (por instância) |
 | `PORT` | 3001 | Porta HTTP e WebSocket (o Render define a sua) |
 | `HOST` | `0.0.0.0` com `NODE_ENV=production` ou no Render; senão o padrão do Node | Interface de escuta |
 | `PROXY_DIAGNOSTICS` | desligado | `true` registra quantas entradas o `X-Forwarded-For` tem em `/api/health` (nunca os IPs), para escolher `TRUST_PROXY` |
@@ -71,7 +71,7 @@ controla, ou ajuste `TOKEN_RATE_LIMIT`. Em desenvolvimento (Vite → Express) to
 
 | Ponto | Diagnóstico | Solução | Evidência |
 |---|---|---|---|
-| `POST /api/token` sem rate limit | Abuso podia consumir a cota OAuth da aplicação | Janela deslizante por cliente (10/min) e global (120/min); 429 com `Retry-After` e `retryAfterMs`; requisições inválidas também contam; bloqueadas não estendem o bloqueio; prazo de 10 s na chamada ao Discord | `server/app.js`; `server/test/routes.test.js` |
+| `POST /api/token` sem rate limit | Abuso podia consumir a cota OAuth da aplicação | Janela deslizante por cliente e global (hoje 120/min e 240/min; originalmente 10 e 120, revistos para o IP compartilhado do proxy do Discord); 429 com `Retry-After` e `retryAfterMs`; requisições inválidas também contam; bloqueadas não estendem o bloqueio; prazo de 10 s na chamada ao Discord | `server/app.js`; `server/test/routes.test.js` |
 | `*.trycloudflare.com` em todos os ambientes | Qualquer túnel (e subdomínios de vários níveis) era aceito também em produção | Perfis `production` / `local` / `tunnel`; o túnel só no perfil `tunnel` e com um único rótulo; Origin com caminho, consulta ou porta não padrão é recusado | `server/chat/origin.js`; `server/test/hardening.test.js` |
 | Cache de 5 min de `/users/@me` | Token revogado aceito por até 5 min em novas conexões | TTL de 60 s, igual à revalidação dos membros; chave continua sendo o SHA-256 (desde a fase 5.1, 401/403 entram num cache negativo de 60 s — ver abaixo) | `server/chat/config.js`; `server/test/hardening.test.js` |
 | Rotas HTTP sem teste | `/api/token` e `/api/health` só eram validadas manualmente | App Express extraído para `server/app.js` (sem efeitos colaterais) e coberto com Discord simulado: sucesso, configuração ausente, parâmetros inválidos, JSON inválido, corpo grande, recusa do Discord, 5xx, falha de rede, lentidão | `server/test/routes.test.js` |
@@ -91,20 +91,66 @@ cliente): antes 232 + 232 chamadas e 159 sockets abertos; depois 50 + 0 e no má
 
 | Camada | Limite | Por quê |
 |---|---|---|
-| Upgrade: falhas por IP | 20 falhas do cliente em 5 min → upgrade recusado com HTTP 429 + `Retry-After` até a janela passar | Bloqueia a enxurrada de um IP **antes** de aceitar o socket. Só contam erros do cliente (`invalid_token`, instância errada, protocolo); `discord_unavailable`, `auth_timeout` e falhas do servidor não contam, para que um problema do Discord não bloqueie ninguém |
-| Upgrade: taxa por IP | 60 upgrades por minuto → HTTP 429 | Limita conexões simultâneas abertas antes de qualquer falha ser registrada |
-| Sockets não autenticados | 50 por IP e 500 no total → HTTP 429 / 503 | Cada um vive no máximo 5 s (`auth_timeout`); a vaga é liberada ao autenticar ou fechar |
+| Upgrade: falhas por IP | 200 falhas em 5 min (era 20; ver a seção seguinte) → upgrade recusado com HTTP 429 + `Retry-After` até a janela passar | Bloqueia a enxurrada de um IP **antes** de aceitar o socket. Só contam erros anteriores à identidade (`invalid_token`, protocolo); `discord_unavailable`, `auth_timeout`, falhas do servidor e erros de quem tem token válido (`not_in_instance`) não contam |
+| Upgrade: taxa por IP | 300 upgrades por minuto (era 60) e 1.200 no total do processo → HTTP 429 / 503 | Limita conexões abertas antes de qualquer falha ser registrada |
+| Sockets não autenticados | 200 por IP (era 50) e 500 no total → HTTP 429 / 503 | Cada um vive no máximo 5 s (`auth_timeout`); a vaga é liberada ao autenticar ou fechar |
 | Validações reais de token | 100 a cada 10 s no total (cache miss) → `1013 discord_unavailable` | Teto independente de IP e de token: no pior caso 6.000 chamadas em 10 min, abaixo dos 10.000 do Discord |
 | Cache negativo | 401/403 de `/users/@me` guardado por 60 s (chave: SHA-256, até 5.000 entradas) | Repetir o mesmo token inválido não chama o Discord; um token recusado não volta a ser válido |
 | Ordem das consultas | `activity-instances` (Bot Token) só depois de o token do usuário ser válido | Token falso nunca consome a cota do bot |
 | 429 do Discord | Respeita `retry_after` / `Retry-After` (teto de 5 min): global ou sem JSON (bloqueio por IP) → nenhuma validação até passar; por token → só aquele token; bot → nenhuma consulta de instância (o cache válido continua servindo) | Insistir durante um 429 é o que leva à restrição do IP |
 
-**Usuários legítimos.** Os limites por IP são altos o bastante para redes compartilhadas: 40
-usuários entrando juntos pelo mesmo IP autenticam normalmente, e algumas falhas no mesmo IP
-(abaixo de 20) não afetam ninguém. Quem já está conectado continua conversando mesmo que o
-IP seja bloqueado depois. As recusas de upgrade chegam ao navegador como `1006`, que o cliente
-trata como queda passageira (reconecta com backoff); `1013` também. Quem reconecta com um token
-já validado (cache de 60 s) não depende do teto global.
+**Usuários legítimos.** Quem já está conectado continua conversando mesmo que o IP seja
+bloqueado depois. As recusas de upgrade chegam ao navegador como `1006`, que o cliente trata como
+queda passageira (reconecta com backoff); `1013` também. Quem reconecta com um token já validado
+(cache de 60 s) não depende do teto global.
+
+## Limites com IP compartilhado (proxy do Discord)
+
+O proxy das Activities do Discord existe para **esconder o IP dos usuários**: no Render, muitas
+pessoas podem chegar com o mesmo IP. Com os valores originais, medidos com o código real e todos
+no mesmo IP, o `/api/token` bloqueava a partir do 11º usuário por minuto, 100 entradas simultâneas
+estouravam o limite de 50 sockets pendentes, e **20 tokens falsos de uma pessoa bloqueavam novas
+conexões de todos por 5 min**. Os limites foram reorganizados assim:
+
+- **Antes da autenticação** só existem tetos por IP dimensionados para ~100 usuários atrás de um
+  IP, mais tetos **globais** do processo (um contador por instância, compartilhado por todos os
+  pontos que o usam: o validador de token é o mesmo no chat e nas rotas `/api/legal`).
+- **Depois da autenticação**, a cota é de cada conta, pelo ID do Discord devolvido pela validação
+  do token no servidor (nunca um ID enviado pelo cliente).
+
+| Momento | Limite | Valor | Por quê |
+|---|---|---|---|
+| Antes (sem identidade) | `/api/token` por IP | 120/min | 100 entradas + novas tentativas no mesmo IP; o código OAuth não identifica a pessoa |
+| | `/api/token` global | 240/min | Pior caso com códigos inválidos: 2.400 recusas em 10 min, abaixo das 10.000 que restringem o IP do servidor |
+| | Upgrades por IP / global | 300/min / 1.200/min | 100 usuários com reconexões; o global segura enxurradas de muitos IPs |
+| | Sockets pendentes por IP / total | 200 / 500 | 100 entradas simultâneas; cada socket vive até 5 s |
+| | Falhas por IP | 200 em 5 min | Uma pessoa sozinha não bloqueia todos; uma enxurrada ainda é cortada |
+| | Rotas `/api/legal` por IP | 300/min (status e aceite) | Teto contra enxurradas antes de validar o token |
+| | Validações de token no Discord (global) | 100 a cada 10 s (mantido) | Garantia contra a restrição do IP do servidor (≤ 6.000 em 10 min), compartilhada por chat e rotas legais |
+| | Cache negativo / positivo de tokens | 60 s | Token repetido não chama o Discord |
+| Depois (por conta) | Autenticações no chat | 30/min → `4029 too_many_auth_attempts` | Contém a tempestade de reconexões de uma conta |
+| | Conexões simultâneas | 3 | — |
+| | Mensagens / frames | 5 a cada 10 s / 30 a cada 10 s por conexão | — |
+| | Rotas `/api/legal` | 20/min (status), 6/min (aceite) | — |
+| Produto | Conexões por sala | 50 (mantido) | Limite da instância da Activity |
+
+**Custo aceito.** Antes da autenticação não há como distinguir um atacante de um usuário quando
+os dois chegam pelo mesmo IP. Com o teto de falhas mais alto, uma enxurrada de tokens falsos de um
+único IP pode esgotar o teto global de validações (100 a cada 10 s) por alguns segundos antes de o
+IP ser bloqueado: nesse intervalo, quem chega com um token **novo** recebe `1013` e reconecta com
+backoff (quem tem token em cache entra normalmente). É o preço de não bloquear uma sala inteira
+por causa de uma pessoa.
+
+**Por instância.** Todos esses contadores ficam em memória: valem **por instância do servidor**.
+Com várias instâncias no Render, cada uma tem os próprios contadores e os tetos "globais" se
+multiplicam pelo número de instâncias. Hoje o serviço roda com uma instância.
+
+**Depende do deploy.** Quantos usuários de fato compartilham um IP só pode ser medido no Render
+(`PROXY_DIAGNOSTICS=true`; ver [DEPLOY-RENDER.md](DEPLOY-RENDER.md#proxy-confiável-no-render)).
+Os valores acima partem do pior caso (todos no mesmo IP).
+
+Evidência: `server/test/shared-ip-limits.test.js` (10, 30, 50 e 100 usuários no mesmo IP, 20 e 200
+tokens inválidos, reconexões simultâneas, tempestade de uma conta, tetos globais compartilhados).
 
 **IP do cliente.** O chat usa a mesma regra do `/api/token`: `app.get("trust proxy fn")`,
 compilada a partir de `TRUST_PROXY` (`server/chat/client-ip.js`). Sem proxy confiável, o IP é o
@@ -129,11 +175,11 @@ Evidência: `server/test/auth-abuse.test.js` (servidor real, Discord simulado, r
 2. **Identificação do cliente atrás de proxies.** O limite por cliente depende de `TRUST_PROXY`
    refletir a topologia real (ver "Rate limit e proxies"). Na implantação, confira qual IP o
    Express enxerga antes de reduzir `TOKEN_RATE_LIMIT`. O mesmo vale para os limites por IP do
-   WebSocket: atrás de um proxy não declarado, todos compartilham um IP, e 20 tokens inválidos
-   de qualquer usuário bloqueiam novas conexões de todos por até 5 min.
-   O teto global de validações também pode ser esgotado de propósito por muitos IPs: nesse
-   caso, quem chega com um token novo recebe `1013` e tenta de novo com backoff até a janela
-   de 10 s passar — preço aceito para nunca arriscar a restrição do IP do servidor.
+   WebSocket: atrás de um proxy (como o do Discord), todos compartilham um IP; os valores atuais
+   foram dimensionados para isso (ver "Limites com IP compartilhado").
+   O teto global de validações também pode ser esgotado de propósito: nesse caso, quem chega com
+   um token novo recebe `1013` e tenta de novo com backoff até a janela de 10 s passar — preço
+   aceito para nunca arriscar a restrição do IP do servidor.
 3. **Janela de revogação.** Um token revogado continua aceito em novas conexões por até 60 s
    (cache de `/users/@me`), e quem sai da instância pode continuar conectado por até 60 s.
 4. **Limites por processo.** Rate limits, caches e salas vivem em memória de um único processo;

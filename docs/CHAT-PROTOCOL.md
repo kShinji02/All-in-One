@@ -12,11 +12,13 @@ frame, códigos de erro e pares de fechamento) e roda o servidor real: se diverg
   `local` também `localhost` / `127.0.0.1` / `[::1]`; `tunnel` (padrão fora de produção) também
   `https://<subdomínio>.trycloudflare.com`. Caso contrário: HTTP 403. Rota diferente de
   `/api/chat`: 404. Detalhes em [SEGURANCA.md](SEGURANCA.md#configuração-de-produção).
-- Proteção contra abuso, antes de aceitar o socket: um IP com 20 falhas de autenticação em
-  5 min, mais de 60 upgrades por minuto ou 50 sockets ainda não autenticados recebe HTTP 429
-  com `Retry-After`; acima de 500 sockets não autenticados no total, HTTP 503. O navegador vê
-  `1006` e o cliente reconecta com backoff. Detalhes em
-  [SEGURANCA.md](SEGURANCA.md#proteção-da-autenticação-do-websocket-fase-51).
+- Proteção contra abuso, antes de aceitar o socket (tetos dimensionados para muitos usuários
+  atrás do mesmo IP do proxy do Discord): um IP com 200 falhas de token inválido ou de protocolo
+  em 5 min, mais de 300 upgrades por minuto ou 200 sockets ainda não autenticados recebe HTTP 429
+  com `Retry-After`; acima de 1.200 upgrades por minuto ou 500 sockets não autenticados no total
+  do processo, HTTP 503. O navegador vê `1006` e o cliente reconecta com backoff. Depois da
+  autenticação, cada conta tem até 30 autenticações por minuto (acima: `4029 too_many_auth_attempts`).
+  Detalhes em [SEGURANCA.md](SEGURANCA.md#limites-com-ip-compartilhado-proxy-do-discord).
 - Frames só de texto (JSON), até 4 KiB cada. Binário fecha com `4000 binary_not_supported`;
   acima do limite, 1009.
 - O primeiro frame deve ser `auth`, em até 5 s (senão `4008 auth_timeout`).
@@ -87,11 +89,14 @@ Classificação no cliente: `client/src/realtime/chat-close-codes.ts`.
 |---|---|---|---|
 | 4008 | `auth_timeout` | transient | reconecta com backoff |
 | 1013 | `discord_unavailable` (inclui 429 do Discord e teto de validações) | transient | reconecta com backoff |
+| 1013 | `acceptance_unavailable` (banco dos aceites indisponível) | transient | reconecta com backoff |
+| 4003 | `legal_acceptance_required` (sem aceite das versões atuais; ver [ACEITE-LEGAL.md](ACEITE-LEGAL.md)) | legal_required | para; volta à tela de aceite |
 | 4029 | `too_many_frames` | transient | reconecta com backoff |
 | 4001 | `auth_failed` (falha inesperada no autenticador) | transient | reconecta com backoff |
 | 4001 | `invalid_token`, `auth_required` | session_expired | para; "Recarregar Activity" |
 | 4003 | `not_in_instance`, `instance_not_found` | left_instance | para; "Recarregar Activity" |
 | 4029 | `too_many_connections`, `room_full` | limit | para; "Reconectar" |
+| 4029 | `too_many_auth_attempts` (mais de 30 autenticações da conta por minuto) | auth_rate_limited | para; "Muitas tentativas", aguardar e "Reconectar" |
 | 4001 | `auth_unavailable` (chat sem Bot Token) | unavailable | para |
 | 1011 | `server_misconfigured` (Bot Token recusado) | unavailable | para |
 | 4000 | `invalid_json`, `invalid_message`, `binary_not_supported`, `invalid_auth`, `auth_in_progress`, `invalid_instance` | protocol | para |

@@ -17,6 +17,8 @@ Express + `ws` no backend.
 | [docs/CHAT-PROTOCOL.md](docs/CHAT-PROTOCOL.md) | Protocolo do WebSocket do chat: frames, limites e códigos de fechamento |
 | [docs/SEGURANCA.md](docs/SEGURANCA.md) | Modelo de segurança e resultado da auditoria |
 | [docs/DEPLOY-RENDER.md](docs/DEPLOY-RENDER.md) | Implantação do backend no Render: comandos, variáveis de ambiente e `TRUST_PROXY` |
+| [docs/DEPLOY-CLOUDFLARE.md](docs/DEPLOY-CLOUDFLARE.md) | Frontend na Cloudflare (Workers Static Assets): publicação manual, teste no Discord e reversão |
+| [docs/ACEITE-LEGAL.md](docs/ACEITE-LEGAL.md) | Aceite dos Termos de Uso e da Política de Privacidade: fluxo, versionamento, registro no PostgreSQL (Neon) |
 
 ## Requisitos
 
@@ -116,6 +118,9 @@ sessão, os participantes e o chat ficam indisponíveis: eles dependem do Embedd
 | `client/` | `npm run typecheck` | `tsc -b` |
 | `client/` | `npm run build` | `tsc -b` + build de produção em `client/dist` |
 | `client/` | `npm run preview` | Serve o build de `client/dist` |
+| `client/` | `npm run build:cloudflare` | `npm run build` + `verify-dist` (sem segredos, `/api` relativo, sem source maps) |
+| `client/` | `npm run cf:dev` / `cf:dry-run` | Frontend no simulador local da Cloudflare / simulação do envio (não publica) |
+| `client/` | `npm run cf:deploy` | **Publica** o frontend na Cloudflare ([docs/DEPLOY-CLOUDFLARE.md](docs/DEPLOY-CLOUDFLARE.md)) |
 
 ## Testes
 
@@ -137,6 +142,6 @@ cd client && npm run build      # gera client/dist
 
 O backend não serve o `client/dist`: em produção, publique o build num servidor de arquivos
 estáticos com `/api` (HTTP e WebSocket) encaminhado ao backend, e mapeie esse endereço no
-URL Mapping da Activity. Inicie o backend com `NODE_ENV=production` (só o `discordsays.com`
+URL Mapping da Activity (preparado para a Cloudflare: [docs/DEPLOY-CLOUDFLARE.md](docs/DEPLOY-CLOUDFLARE.md)). Inicie o backend com `NODE_ENV=production` (só o `discordsays.com`
 da aplicação é aceito no chat) e ajuste `TRUST_PROXY` aos seus proxies. Para o Render, veja
 [docs/DEPLOY-RENDER.md](docs/DEPLOY-RENDER.md).

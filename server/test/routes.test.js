@@ -254,9 +254,10 @@ describe("POST /api/token — rate limit", () => {
       return json(200, { access_token: ACCESS_TOKEN });
     });
     const { post } = await start({ fetchImpl: discord.fetchImpl, now: time.now });
-    const statuses = (await Promise.all(Array.from({ length: 25 }, (_, i) => post({ code: `c${i}` })))).map((r) => r.status);
+    const burst = TOKEN_RATE_LIMIT.limit + 15;
+    const statuses = (await Promise.all(Array.from({ length: burst }, (_, i) => post({ code: `c${i}` })))).map((r) => r.status);
     assert.equal(statuses.filter((s) => s === 200).length, TOKEN_RATE_LIMIT.limit);
-    assert.equal(statuses.filter((s) => s === 429).length, 25 - TOKEN_RATE_LIMIT.limit);
+    assert.equal(statuses.filter((s) => s === 429).length, burst - TOKEN_RATE_LIMIT.limit);
     assert.equal(discord.calls.length, TOKEN_RATE_LIMIT.limit);
   });
 

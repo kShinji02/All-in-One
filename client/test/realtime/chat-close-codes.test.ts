@@ -13,6 +13,7 @@ describe('classifyClose — fechamentos do servidor', () => {
     [4003, 'instance_not_found', 'left_instance', false],
     [4029, 'too_many_connections', 'limit', false],
     [4029, 'room_full', 'limit', false],
+    [4029, 'too_many_auth_attempts', 'auth_rate_limited', false],
     [4001, 'auth_unavailable', 'unavailable', false],
     [1011, 'server_misconfigured', 'unavailable', false],
     [4000, 'invalid_json', 'protocol', false],
@@ -21,6 +22,8 @@ describe('classifyClose — fechamentos do servidor', () => {
     [4000, 'invalid_auth', 'protocol', false],
     [4000, 'auth_in_progress', 'protocol', false],
     [4000, 'invalid_instance', 'protocol', false],
+    [1013, 'acceptance_unavailable', 'transient', true],
+    [4003, 'legal_acceptance_required', 'legal_required', false],
   ];
 
   for (const [code, reason, category, reconnect] of expected) {
@@ -29,7 +32,7 @@ describe('classifyClose — fechamentos do servidor', () => {
     });
   }
 
-  it('a tabela tem exatamente os 18 pares acima', () => {
+  it('a tabela tem exatamente os 20 pares acima', () => {
     expect(Object.keys(SERVER_CLOSE_REASONS).sort()).toEqual(expected.map(([, reason]) => reason).sort());
   });
 

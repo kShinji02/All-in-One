@@ -8,6 +8,7 @@ const ALL_CODES: DiscordErrorCode[] = [
   'server_misconfigured',
   'token_exchange_failed',
   'backend_unreachable',
+  'backend_timeout',
   'authenticate_failed',
 ];
 

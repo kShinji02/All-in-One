@@ -2,27 +2,32 @@ import { DISCORD_API_BASE } from '@/discord/config';
 import { DiscordSessionError } from '@/discord/errors';
 import { guildIconUrl } from '@/discord/cdn';
 import type { DiscordGuild } from '@/discord/types';
+import { fetchJson, HTTP_TIMEOUTS, HttpRequestError } from '@/lib/http';
 
 /**
  * Troca o código OAuth2 por um access_token através do backend Express.
  * O Client Secret existe apenas no servidor; o cliente só envia o código.
  */
-export async function exchangeCodeForToken(code: string): Promise<string> {
-  let response: Response;
+export async function exchangeCodeForToken(code: string, timeoutMs: number = HTTP_TIMEOUTS.tokenExchange): Promise<string> {
+  let response;
   try {
-    response = await fetch('/api/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code }),
-    });
-  } catch {
+    response = await fetchJson(
+      '/api/token',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) },
+      { timeoutMs },
+    );
+  } catch (error) {
+    // Sem resposta no prazo: backend acordando (Render Free) ou proxy travado. "Tentar novamente"
+    // refaz o fluxo inteiro (novo código OAuth), então não há risco de reutilizar o código.
+    if (error instanceof HttpRequestError && error.kind === 'timeout') {
+      throw new DiscordSessionError('backend_timeout', `sem resposta em ${Math.round(timeoutMs / 1000)} s`);
+    }
     throw new DiscordSessionError('backend_unreachable');
   }
 
-  const data: unknown = await response.json().catch(() => null);
-  const body = (typeof data === 'object' && data !== null ? data : {}) as Record<string, unknown>;
+  const { body, ok, status } = response;
 
-  if (response.ok && typeof body.access_token === 'string') {
+  if (ok && typeof body.access_token === 'string') {
     return body.access_token;
   }
 
@@ -31,24 +36,31 @@ export async function exchangeCodeForToken(code: string): Promise<string> {
   }
   if (typeof body.error !== 'string') {
     // Resposta sem o formato do nosso backend: o proxy não alcançou o Express.
-    throw new DiscordSessionError('backend_unreachable', `HTTP ${response.status}`);
+    throw new DiscordSessionError('backend_unreachable', `HTTP ${status}`);
   }
   const detail = typeof body.discordError === 'string' ? body.discordError : body.error;
-  throw new DiscordSessionError('token_exchange_failed', `HTTP ${response.status} · ${detail}`);
+  throw new DiscordSessionError('token_exchange_failed', `HTTP ${status} · ${detail}`);
 }
 
 /**
  * Busca o servidor atual na lista de servidores do usuário (escopo "guilds"),
  * como no guia oficial "Building an Activity". Falhas retornam null.
  */
-export async function fetchCurrentGuild(accessToken: string, guildId: string): Promise<DiscordGuild | null> {
+export async function fetchCurrentGuild(
+  accessToken: string,
+  guildId: string,
+  timeoutMs: number = HTTP_TIMEOUTS.optional,
+): Promise<DiscordGuild | null> {
   try {
-    const response = await fetch(`${DISCORD_API_BASE}/users/@me/guilds`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!response.ok) return null;
-    const guilds = (await response.json()) as Array<{ id: string; name: string; icon?: string | null }>;
-    const guild = guilds.find((g) => g.id === guildId);
+    // Com prazo curto: é um dado opcional e a sessão espera por ele na etapa "context".
+    const { ok, data } = await fetchJson(
+      `${DISCORD_API_BASE}/users/@me/guilds`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { timeoutMs },
+    );
+    if (!ok || !Array.isArray(data)) return null;
+    const guilds = data as Array<{ id: string; name: string; icon?: string | null }>;
+    const guild = guilds.find((g) => g?.id === guildId);
     return guild ? { id: guild.id, name: guild.name, iconUrl: guildIconUrl(guild) } : null;
   } catch {
     return null;

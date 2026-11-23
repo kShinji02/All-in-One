@@ -317,6 +317,47 @@ describe('falhas e reconexão', () => {
     });
   });
 
+  it.each([
+    ['discord_unavailable', 'teto de validações ou Discord fora'],
+    ['acceptance_unavailable', 'banco dos aceites fora'],
+  ])('1013 %s repetido (%s): espera crescente, um socket por vez, para após o limite', (reason) => {
+    const { connection } = setup();
+    connection.start();
+    const delays: number[] = [];
+    // MAX_RECONNECT_ATTEMPTS conexões no total: a inicial e MAX − 1 novas tentativas.
+    for (let i = 0; i < MAX_RECONNECT_ATTEMPTS - 1; i += 1) {
+      FakeSocket.last.serverOpen();
+      FakeSocket.last.serverClose(1013, reason);
+      const s = connection.getState();
+      if (s.status !== 'reconnecting') throw new Error(`tentativa ${i}: esperava reconnecting, veio ${s.status}`);
+      delays.push(s.delayMs);
+      // Sem tempestade: nenhum socket novo antes do fim da espera, e nunca dois vivos.
+      vi.advanceTimersByTime(s.delayMs - 1);
+      expect(FakeSocket.instances).toHaveLength(i + 1);
+      expect(FakeSocket.instances.filter((sock) => sock.readyState !== 3).length).toBeLessThanOrEqual(1);
+      vi.advanceTimersByTime(1);
+    }
+    // random = 0 → metade do teto: 500, 1 s, 2 s, 4 s… nunca abaixo da metade da espera-base.
+    expect(delays).toEqual(delays.map((_, i) => Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * 2 ** i) / 2));
+    expect(delays.every((d) => d >= RECONNECT_BASE_DELAY_MS / 2)).toBe(true);
+
+    FakeSocket.last.serverOpen();
+    FakeSocket.last.serverClose(1013, reason);
+    expect(connection.getState()).toMatchObject({ status: 'stopped', reason: 'retries_exhausted' });
+    vi.advanceTimersByTime(10 * RECONNECT_MAX_DELAY_MS);
+    expect(FakeSocket.instances).toHaveLength(MAX_RECONNECT_ATTEMPTS);
+    connection.dispose();
+  });
+
+  it('100 clientes recebendo 1013 ao mesmo tempo voltam espalhados (jitter), não em rajada', () => {
+    const first = Array.from({ length: 100 }, (_, i) => reconnectDelay(1, () => i / 99));
+    const fifth = Array.from({ length: 100 }, (_, i) => reconnectDelay(5, () => i / 99));
+    expect(Math.min(...first)).toBe(RECONNECT_BASE_DELAY_MS / 2);
+    expect(Math.max(...first)).toBe(RECONNECT_BASE_DELAY_MS);
+    expect(new Set(fifth).size).toBeGreaterThan(50);
+    expect(Math.max(...fifth) - Math.min(...fifth)).toBeGreaterThanOrEqual(7_000);
+  });
+
   it('1013 discord_unavailable e 4029 too_many_frames são passageiros: reconecta', () => {
     for (const [code, reason] of [
       [1013, 'discord_unavailable'],

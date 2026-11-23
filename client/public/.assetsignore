@@ -1,0 +1,5 @@
+# Arquivos de dist/ que NÃO são enviados à Cloudflare (formato do .gitignore).
+# Source maps só existem quando o dist/ veio do `npm run dev:discord`; o build:cloudflare
+# limpa a pasta, e esta regra é a segunda proteção.
+*.map
+.assetsignore

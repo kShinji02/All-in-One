@@ -9,6 +9,10 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "preview": "vite preview",
+    "build:cloudflare": "npm run build && node scripts/verify-dist.mjs",
+    "cf:dev": "npm run build:cloudflare && npx --yes wrangler@4.158.0 dev --port 8787",
+    "cf:dry-run": "npm run build:cloudflare && npx --yes wrangler@4.158.0 deploy --dry-run",
+    "cf:deploy": "npm run build:cloudflare && npx --yes wrangler@4.158.0 deploy",
     "test": "tsc -p tsconfig.test.json && vitest run",
     "test:watch": "vitest"
   },

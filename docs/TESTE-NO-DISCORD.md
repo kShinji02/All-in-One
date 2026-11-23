@@ -18,6 +18,8 @@ Visão técnica em [ARQUITETURA.md](ARQUITETURA.md); protocolo do chat em [CHAT-
 | 8 | Sair da instância | [Chat: sair da instância](#chat-sair-da-instância) | `client/test/realtime/chat-connection.server.test.ts` (revalidação real) |
 | 9 | Abrir links externos | [Chat: links externos](#chat-links-externos) | `client/test/chat/external-links.test.tsx` |
 | 10 | Recuperar um painel após erro | [Painéis com erro](#painéis-com-erro) | `client/test/home/HomeView.test.tsx` (só automatizado) |
+| 11 | Aceitar os Termos e a Política | [Aceite dos documentos legais](#aceite-dos-documentos-legais) | `client/test/legal/`, `server/test/legal-acceptance.test.js` |
+| 12 | Backend lento ou acordando | [Backend lento ou acordando](#backend-lento-ou-acordando) | `client/test/lib/http.test.ts`, `client/test/legal/LegalGate.test.tsx` |
 
 Os testes automatizados rodam com `npm test` em `server/` e em `client/`.
 
@@ -51,11 +53,44 @@ DISCORD_BOT_TOKEN=<token do bot da aplicação>
 - Sem o token (ou com o valor de exemplo do `example.env`), o backend sobe normalmente, mas avisa
   `Chat indisponível` no console e recusa as conexões em `/api/chat` (`4001 auth_unavailable`).
   O OAuth e a lista de participantes não dependem dele.
+- **Aceite dos documentos legais:** o chat só abre para quem aceitou os Termos de Uso e declarou
+  ciência da Política de Privacidade, e o servidor precisa de um lugar para registrar esse aceite.
+  Escolha **uma** das opções da [seção 2.1](#21-onde-registrar-os-aceites).
 - **Permissões:** o token é usado só como credencial da aplicação numa chamada REST
   (`GET /applications/{id}/activity-instances/{instance_id}`). O chat não usa o Gateway do
   Discord, intents nem permissões de servidor; nenhuma opção extra da página **Bot** é necessária.
   Se o Discord recusar o token, o backend registra `DISCORD_BOT_TOKEN recusado pelo Discord`
   (sem o valor) e o chat mostra **Chat indisponível**.
+
+### 2.1 Onde registrar os aceites
+
+Sem nenhuma das duas variáveis, o backend local sobe, avisa
+`DATABASE_URL não definido: o aceite dos documentos legais fica indisponível` e a Activity fica
+na tela **Não foi possível verificar o aceite**; o chat recusa com `1013 acceptance_unavailable`.
+Nada é liberado sem registro.
+
+| Opção | No `.env` | Quando usar | Observações |
+|---|---|---|---|
+| Memória | `LEGAL_STORE=memory` | Teste local rápido, sem banco | Os aceites somem a cada reinício do backend (a tela de aceite volta). **Recusado** com `NODE_ENV=production` ou no Render: o servidor nem inicia |
+| PostgreSQL | `DATABASE_URL=postgresql://…` | Testar o mesmo caminho da produção | Use um banco **de desenvolvimento**, nunca o de produção. O TLS é obrigatório e verificado; `sslmode=disable` só é aceito fora de produção (ex.: PostgreSQL local). No Neon, use a string **direta** (sem `-pooler`); ver [ACEITE-LEGAL.md](ACEITE-LEGAL.md#conexão-e-compatibilidade-com-o-pooler-do-neon) |
+
+```env
+# Escolha UMA linha:
+LEGAL_STORE=memory
+# DATABASE_URL=postgresql://<usuário>:<senha>@<host>/<banco>?sslmode=require
+```
+
+- O valor de `DATABASE_URL` é uma credencial: fica só no `.env` (que não vai para o Git) e nunca
+  aparece nos logs; o backend registra apenas o host.
+- Com `DATABASE_URL`, o backend cria a tabela na primeira execução e registra
+  `[db] migrations aplicadas: 1.` (nas seguintes, `[db] schema atualizado`).
+- `LEGAL_STORE` aceita só `memory` ou `postgres`. Com `LEGAL_STORE=postgres` sem `DATABASE_URL`,
+  o armazenamento fica indisponível, como sem nenhuma variável.
+- Para ver a tela de aceite de novo: com `memory`, reinicie o backend; com PostgreSQL, apague o
+  registro de teste seguindo [ACEITE-LEGAL.md](ACEITE-LEGAL.md#exclusão-administrativa-ex-pedido-de-eliminação-de-um-titular).
+- Os links da tela de aceite apontam para os endereços padrão do GitHub Pages
+  (`server/legal/config.js`). Enquanto o site não estiver publicado, eles respondem 404; para testar
+  com outra cópia, defina `LEGAL_TERMS_URL` e `LEGAL_PRIVACY_URL` (somente `https://`).
 
 ## 3. Subir backend, frontend e túnel (3 terminais)
 
@@ -80,7 +115,9 @@ cloudflared tunnel --url http://localhost:5173
 ```
 
 Confira o backend com `curl http://localhost:3001/api/health`. Ele deve responder
-`{"ok":true,"oauthConfigured":true,"chatConfigured":true}`. Se algum campo aparecer `false`, o
+`{"ok":true,"oauthConfigured":true,"chatConfigured":true,"legalStore":"memory"}` (ou
+`"legalStore":"postgres"` com `DATABASE_URL`). `"legalStore":"unavailable"` significa que a
+[seção 2.1](#21-onde-registrar-os-aceites) não foi feita. Se algum campo aparecer `false`, o
 `.env` não foi lido ou contém os valores de exemplo (`oauthConfigured` depende do Client ID e do
 Client Secret; `chatConfigured`, do Client ID e do `DISCORD_BOT_TOKEN`). A resposta nunca mostra
 os valores configurados.
@@ -94,6 +131,14 @@ Em **Activities → URL Mappings**, configure:
 | `/` | `<subdominio>.trycloudflare.com` (sem `https://`) |
 
 A URL do túnel muda a cada execução do `cloudflared`; atualize o mapeamento quando isso ocorrer.
+
+Com só o mapeamento `/`, todas as chamadas a `/api` (token, aceite e chat) passam pelo túnel e
+chegam ao backend **local** pelo proxy do Vite (`client/vite.config.ts`).
+
+**Backend no Render:** se a aplicação também tiver o mapeamento `/api` → `<serviço>.onrender.com/api`,
+o Discord envia `/api` direto ao Render (o prefixo mais específico vence) e o backend local é
+ignorado: o `.env` local não vale, e o aceite fica no banco do Render. Para testar o backend local,
+remova temporariamente esse mapeamento ou use outra aplicação de teste no Developer Portal.
 
 ## 5. Abrir a Activity
 
@@ -124,6 +169,7 @@ Ao final, mostra seu nome e avatar, o servidor, o canal, a plataforma, o ID da i
 | `token_exchange_failed · invalid_client` | O Client Secret está incorreto. |
 | `token_exchange_failed · invalid_grant` | O código expirou ou já foi usado. Clique em **Tentar novamente**. |
 | `backend_unreachable` | O Express não está rodando na porta 3001. |
+| `backend_timeout` | O backend não respondeu à troca do código em 30 s (no Render Free, o serviço pode estar acordando). Aguarde e clique em **Tentar novamente**. |
 | `authenticate_failed` | O token foi rejeitado pelo cliente do Discord. |
 
 Os erros de handshake (`ready_timeout`, `sdk_init_failed`) mostram **Recarregar Activity** em vez de
@@ -149,6 +195,34 @@ A seção **Participantes**, enquanto o handshake não termina, mostra "Conectan
 O servidor e o canal aparecem como **Indisponível** quando a consulta não é permitida no
 contexto (por exemplo, em mensagens diretas, que exigiriam `dm_channels.read`, um escopo que
 depende de aprovação do Discord).
+
+## Aceite dos documentos legais
+
+Pré-requisito: [seção 2.1](#21-onde-registrar-os-aceites) feita. O fluxo completo está em
+[ACEITE-LEGAL.md](ACEITE-LEGAL.md).
+
+| Passo | Ação | Resultado esperado |
+|---|---|---|
+| 1 | A abre a Activity pela primeira vez | Depois da sessão do Discord, aparece **Antes de começar**, com os links dos dois documentos; o chat não abre |
+| 2 | A clica em **Aceitar e continuar** sem marcar a caixa | O botão está desabilitado |
+| 3 | A marca a caixa e aceita | "Registrando…" e, em seguida, a Home com o chat **Conectado** |
+| 4 | A fecha e reabre a Activity | Entra direto, sem a tela de aceite (com `memory`, só até o backend reiniciar) |
+| 5 | B abre a Activity e clica em **Recusar** | **O uso depende do aceite**, com **Rever documentos** e **Sair da Activity**; nada é liberado |
+| 6 | Pare o banco (ou remova `DATABASE_URL`/`LEGAL_STORE` e reinicie o backend) e reabra como B | **Não foi possível verificar o aceite** com **Tentar novamente**; nunca libera sem confirmação |
+
+## Backend lento ou acordando
+
+As chamadas HTTP do cliente têm prazo (`client/src/lib/http.ts`): 30 s para a troca do código
+(`/api/token`), 20 s para a verificação e o registro do aceite (`/api/legal`) e 5 s para o nome do
+servidor. No Render Free, o primeiro acesso depois de um período sem uso pode levar cerca de um
+minuto, porque o serviço precisa acordar.
+
+| Passo | Ação | Resultado esperado |
+|---|---|---|
+| 1 | Com o backend parado ou suspenso, abra a Activity | Depois do prazo, **Sessão Discord** mostra `backend_timeout` (ou `backend_unreachable`, se a conexão for recusada na hora) com **Tentar novamente** |
+| 2 | Espere o backend responder e clique em **Tentar novamente** | O fluxo recomeça com um novo código OAuth e conclui |
+| 3 | Se o prazo estourar na verificação do aceite | **Não foi possível verificar o aceite** explica que o servidor pode estar iniciando, com **Tentar novamente** |
+| 4 | Se o prazo estourar ao clicar em **Aceitar e continuar** | A tela continua com a caixa marcada e a mensagem de demora; clicar de novo é seguro (o servidor não duplica o registro) |
 
 ## Participantes
 

@@ -5,14 +5,17 @@ import { createSlidingWindowLimiter } from "./chat/rate-limit.js";
 export const DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token";
 
 /**
- * Limites de POST /api/token.
+ * Limites de POST /api/token (antes de existir identidade: o código OAuth não diz quem é).
  *
- * O fluxo legítimo faz UMA troca por abertura da Activity (mais as novas tentativas do
- * botão "Tentar novamente"); 10 por minuto por cliente cobre isso com folga. O limite global
- * protege a cota OAuth da aplicação no Discord mesmo que o atacante troque de IP.
+ * O fluxo legítimo faz UMA troca por abertura da Activity (mais as novas tentativas do botão
+ * "Tentar novamente"). Como o proxy do Discord esconde o IP dos usuários, o limite por IP é um
+ * teto para ~100 usuários atrás do mesmo IP. O limite global protege a aplicação no Discord
+ * mesmo que o atacante troque de IP: no pior caso (todos os códigos inválidos), 2.400 recusas em
+ * 10 min, abaixo das 10.000 que levam o Discord a restringir o IP do servidor.
+ * Contadores em memória, por instância do servidor.
  */
-export const TOKEN_RATE_LIMIT = Object.freeze({ limit: 10, windowMs: 60_000 });
-export const TOKEN_GLOBAL_RATE_LIMIT = Object.freeze({ limit: 120, windowMs: 60_000 });
+export const TOKEN_RATE_LIMIT = Object.freeze({ limit: 120, windowMs: 60_000 });
+export const TOKEN_GLOBAL_RATE_LIMIT = Object.freeze({ limit: 240, windowMs: 60_000 });
 /** Tempo máximo esperando o Discord na troca do código. */
 export const TOKEN_EXCHANGE_TIMEOUT_MS = 10_000;
 
@@ -49,6 +52,10 @@ export function createApp({
   tokenGlobalRateLimit = TOKEN_GLOBAL_RATE_LIMIT,
   tokenExchangeTimeoutMs = TOKEN_EXCHANGE_TIMEOUT_MS,
   proxyDiagnostics = false,
+  /** Rotas do aceite dos documentos legais (legal/routes.js), montadas em /api/legal. */
+  legalRouter = null,
+  /** Tipo do armazenamento dos aceites, exibido no /api/health ("postgres", "unavailable"...). */
+  legalStore = null,
 } = {}) {
   const app = express();
   app.set("trust proxy", trustProxy);
@@ -73,8 +80,10 @@ export function createApp({
       diagnosticsLeft -= 1;
       logger.log(`[proxy] /api/health: X-Forwarded-For com ${countForwardedFor(req.headers["x-forwarded-for"])} entrada(s).`);
     }
-    res.send({ ok: true, oauthConfigured, chatConfigured });
+    res.send({ ok: true, oauthConfigured, chatConfigured, ...(legalStore && { legalStore }) });
   });
+
+  if (legalRouter) app.use("/api/legal", legalRouter);
 
   /** 429 com Retry-After (segundos, arredondado para cima) e o tempo em ms no corpo. */
   function tooManyRequests(res, retryAfterMs) {

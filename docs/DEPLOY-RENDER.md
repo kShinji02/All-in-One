@@ -45,6 +45,7 @@ variáveis já definidas no ambiente).
 | `DISCORD_BOT_TOKEN` | Token do bot (Developer Portal → Bot) | **sim** | o chat recusa todas as conexões |
 | `NODE_ENV` | `production` | não | o chat aceitaria origens de desenvolvimento (localhost e `trycloudflare.com`) |
 | `TRUST_PROXY` | `1` (ver abaixo) | não | todos os clientes compartilham o IP do proxy nos limites por IP |
+| `DATABASE_URL` | connection string **direta** do PostgreSQL (Neon), com TLS; ver [ACEITE-LEGAL.md](ACEITE-LEGAL.md#neon-criar-o-banco-e-configurar-o-render) | **sim** | o servidor não inicia (o deploy falha em vez de ficar "saudável" sem registrar aceites) |
 
 O servidor sobe mesmo sem as credenciais, para que o cliente receba um erro claro; o
 `/api/health` mostra `oauthConfigured` e `chatConfigured` (nunca os valores). A
@@ -57,8 +58,8 @@ inicialização registra um aviso `[config]` para `NODE_ENV` ou `TRUST_PROXY` au
 | `NODE_VERSION` | versão padrão do Render | Fixar a versão do Node (ex.: `22`) |
 | `ORIGIN_PROFILE` | `production` (com `NODE_ENV=production`) | Não defina em produção |
 | `CHAT_EXTRA_ORIGINS` | vazio | Origens HTTPS exatas extras para o chat (ex.: um domínio próprio do frontend) |
-| `TOKEN_RATE_LIMIT` | `10` | Trocas de código OAuth por minuto, por IP |
-| `TOKEN_GLOBAL_RATE_LIMIT` | `120` | Trocas de código OAuth por minuto, no total |
+| `TOKEN_RATE_LIMIT` | `120` | Trocas de código OAuth por minuto, por IP |
+| `TOKEN_GLOBAL_RATE_LIMIT` | `240` | Trocas de código OAuth por minuto, no total |
 | `PROXY_DIAGNOSTICS` | desligado | `true` só durante a verificação do `TRUST_PROXY` (abaixo) |
 
 Não defina `PORT` nem `HOST` no Render: a porta vem do próprio Render e a interface já é `0.0.0.0`.
@@ -89,6 +90,8 @@ Em **Activities → URL Mappings**, mapeie o prefixo `/api` para o backend, por 
 `<serviço>.onrender.com/api`. O proxy do Discord remove o prefixo mapeado, por isso o alvo
 inclui `/api`. Confira com `GET /api/health` de dentro da Activity. Com `NODE_ENV=production`,
 o chat só aceita a origem `https://<client_id>.discordsays.com`.
+O prefixo `/` aponta para o frontend: o Quick Tunnel local ou a Cloudflare
+([DEPLOY-CLOUDFLARE.md](DEPLOY-CLOUDFLARE.md)); o backend não muda em nenhum dos casos.
 
 ## Limitações do plano gratuito
 
@@ -100,6 +103,10 @@ o chat só aceita a origem `https://<client_id>.discordsays.com`.
 
 ## Verificação após a implantação
 
-1. `GET https://<serviço>.onrender.com/api/health` → `{"ok":true,"oauthConfigured":true,"chatConfigured":true}`.
-2. Os logs mostram `perfil "production"`, `Server listening on 0.0.0.0:<porta>` e nenhum aviso `[config]`.
-3. Dentro do Discord, a Activity autentica e o chat conecta.
+1. `GET https://<serviço>.onrender.com/api/health` → `{"ok":true,"oauthConfigured":true,"chatConfigured":true,"legalStore":"postgres"}`.
+   Sem `legalStore`, o Render ainda roda uma versão anterior ao aceite legal.
+2. Os logs mostram `perfil "production"`, `Aceites legais: PostgreSQL em <host> (TLS)` (host sem
+   `-pooler`), `Server listening on 0.0.0.0:<porta>`, `[db] migrations aplicadas: 1.` (na primeira
+   implantação; depois, `[db] schema atualizado`) e nenhum aviso `[config]`.
+3. `GET https://<serviço>.onrender.com/api/legal/status` sem token → `401 {"error":"auth_required"}`.
+4. Dentro do Discord, a Activity autentica, mostra a tela de aceite (ou entra direto) e o chat conecta.

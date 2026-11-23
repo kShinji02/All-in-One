@@ -1,0 +1,18 @@
+// Cloudflare Workers Static Assets: hospeda SOMENTE o frontend (build do Vite em ./dist).
+// Sem "main": nenhum código roda na Cloudflare; o backend continua no Render
+// (URL Mapping /api do Discord). Publicação e reversão: docs/DEPLOY-CLOUDFLARE.md.
+{
+  "$schema": "https://unpkg.com/wrangler@4.158.0/config-schema.json",
+  // Também é o subdomínio: all-in-one-frontend.<sua-conta>.workers.dev
+  "name": "all-in-one-frontend",
+  "compatibility_date": "2025-09-01",
+  "workers_dev": true,
+  // Sem URLs de versão públicas: só a URL principal fica acessível.
+  "preview_urls": false,
+  "assets": {
+    "directory": "./dist",
+    // Caminho sem arquivo correspondente → /index.html com 200 (fallback de SPA).
+    "not_found_handling": "single-page-application",
+    "html_handling": "auto-trailing-slash"
+  }
+}

@@ -14,10 +14,14 @@ export type CloseCategory =
   | 'left_instance'
   /** Limites de conexão do servidor. */
   | 'limit'
+  /** A conta tentou autenticar no chat vezes demais em pouco tempo (cota por conta do servidor). */
+  | 'auth_rate_limited'
   /** Chat não configurado no servidor. */
   | 'unavailable'
   /** O cliente enviou algo que o servidor recusou: erro de programação, não adianta repetir. */
   | 'protocol'
+  /** O usuário não aceitou as versões atuais dos documentos legais (verificado no servidor). */
+  | 'legal_required'
   /** Encerramento pedido pelo próprio cliente. */
   | 'client_closed';
 
@@ -34,6 +38,10 @@ export const SERVER_CLOSE_REASONS: Readonly<Record<string, { code: number; categ
   // O servidor usa auth_failed quando o autenticador lança uma exceção inesperada
   // (server/chat/index.js): é falha do servidor, não do token, então vale tentar de novo.
   auth_failed: { code: 4001, category: 'transient' },
+  // Armazenamento dos aceites indisponível (server/legal/gate.js): tentar de novo, nunca liberar.
+  acceptance_unavailable: { code: 1013, category: 'transient' },
+
+  legal_acceptance_required: { code: 4003, category: 'legal_required' },
 
   invalid_token: { code: 4001, category: 'session_expired' },
   auth_required: { code: 4001, category: 'session_expired' },
@@ -43,6 +51,8 @@ export const SERVER_CLOSE_REASONS: Readonly<Record<string, { code: number; categ
 
   too_many_connections: { code: 4029, category: 'limit' },
   room_full: { code: 4029, category: 'limit' },
+  // Cota de autenticações por conta (server/chat/config.js, USER_AUTH_RATE_LIMIT): para, sem laço.
+  too_many_auth_attempts: { code: 4029, category: 'auth_rate_limited' },
 
   auth_unavailable: { code: 4001, category: 'unavailable' },
   server_misconfigured: { code: 1011, category: 'unavailable' },

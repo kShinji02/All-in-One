@@ -76,17 +76,33 @@ export const INVALID_TOKEN_CACHE_MAX_ENTRIES = 5_000;
 /** Teto para o Retry-After de um 429 do Discord (protege contra valores absurdos). */
 export const DISCORD_MAX_RETRY_AFTER_MS = 5 * 60_000;
 /**
- * Por IP do cliente (resolvido com TRUST_PROXY, como em /api/token):
- * - falhas de autenticação (só falhas contam: usuários legítimos que autenticam com
- *   sucesso atrás do mesmo IP não somam nada);
- * - upgrades por minuto (folga para uma sala cheia reconectar de um mesmo IP);
+ * Por IP do cliente (resolvido com TRUST_PROXY, como em /api/token), ANTES da autenticação.
+ *
+ * O proxy das Activities do Discord esconde o IP dos usuários: no Render, muitas pessoas podem
+ * chegar com o mesmo IP. Por isso estes valores são TETOS contra enxurradas, dimensionados para
+ * ~100 usuários (e as reconexões deles) atrás de um único IP; a cota justa de cada pessoa vem
+ * depois da autenticação (USER_AUTH_RATE_LIMIT, MAX_CONNECTIONS_PER_USER, mensagens, frames).
+ *
+ * - falhas de autenticação: só erros ANTERIORES à identidade (token inválido, protocolo);
+ *   erros de quem já tem token válido (ex.: saiu da instância) não contam por IP;
+ * - upgrades por minuto, por IP e no total do processo;
  * - sockets ainda não autenticados (cada um vive no máximo AUTH_TIMEOUT_MS).
+ *
+ * Todos os limites ficam em memória e valem POR INSTÂNCIA do servidor (com várias instâncias no
+ * Render, cada uma tem os próprios contadores).
  */
-export const AUTH_FAILURE_LIMIT = Object.freeze({ limit: 20, windowMs: 5 * 60_000 });
-export const UPGRADE_RATE_LIMIT = Object.freeze({ limit: 60, windowMs: 60_000 });
-export const MAX_PENDING_AUTH_PER_IP = 50;
+export const AUTH_FAILURE_LIMIT = Object.freeze({ limit: 200, windowMs: 5 * 60_000 });
+export const UPGRADE_RATE_LIMIT = Object.freeze({ limit: 300, windowMs: 60_000 });
+export const UPGRADE_GLOBAL_RATE_LIMIT = Object.freeze({ limit: 1_200, windowMs: 60_000 });
+export const MAX_PENDING_AUTH_PER_IP = 200;
 export const MAX_PENDING_AUTH_TOTAL = 500;
 export const MAX_CONNECTIONS_PER_ROOM = 50;
+/**
+ * Por usuário autenticado (ID do Discord validado no servidor): autenticações no chat por minuto.
+ * Contém a tempestade de reconexões de uma conta; com o backoff do cliente, o uso normal fica
+ * muito abaixo disso. Acima: 4029 too_many_auth_attempts.
+ */
+export const USER_AUTH_RATE_LIMIT = Object.freeze({ limit: 30, windowMs: 60_000 });
 
 /** Revalidação periódica dos membros de cada sala (quem saiu da Activity perde o acesso). */
 export const MEMBERSHIP_REVALIDATE_MS = 60_000;

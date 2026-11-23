@@ -134,6 +134,7 @@ describe('describeChatStatus', () => {
     ['session_expired', 'reload', true],
     ['left_instance', 'reload', true],
     ['limit', 'reconnect', false],
+    ['auth_rate_limited', 'reconnect', false],
     ['unavailable', 'reconnect', true],
     ['retries_exhausted', 'reconnect', false],
     ['protocol', 'reconnect', false],
@@ -153,5 +154,22 @@ describe('describeChatStatus', () => {
     expect(describeFailure({ reason: 'rejected', code: 'message_too_long', retryable: false })).toBe('passou de 500 caracteres');
     expect(describeFailure({ reason: 'rejected', code: 'codigo_futuro', retryable: false })).toBe('recusada pelo servidor');
     expect(describeFailure({ reason: 'timeout', code: null, retryable: true })).toBe('o servidor não respondeu');
+  });
+
+  it('B1: limite de autenticações por conta tem mensagem própria, sem sugerir fechar janelas', () => {
+    const view = describeChatStatus({
+      isReady: false,
+      isLoading: false,
+      error: { reason: 'auth_rate_limited', closeCode: 4029 },
+      connectionState: { status: 'stopped', reason: 'auth_rate_limited', lastClose: { code: 4029, reason: 'too_many_auth_attempts', category: 'auth_rate_limited' } },
+    });
+    expect(view.label).toBe('Muitas tentativas');
+    expect(view.banner?.description).toMatch(/sua conta tentou entrar no chat muitas vezes em pouco tempo/i);
+    expect(view.banner?.description).toMatch(/aguarde um minuto/i);
+    expect(view.banner?.description).not.toMatch(/janela/i);
+    expect(view.banner?.action).toEqual({ kind: 'reconnect', label: 'Reconectar' });
+    // O limite de conexões simultâneas continua com a orientação própria dele.
+    const limit = describeChatStatus({ isReady: false, isLoading: false, error: { reason: 'limit', closeCode: 4029 }, connectionState: { status: 'stopped', reason: 'limit', lastClose: null } });
+    expect(limit.banner?.description).toMatch(/feche outras janelas/i);
   });
 });

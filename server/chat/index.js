@@ -15,7 +15,9 @@ import {
   MAX_PAYLOAD_BYTES,
   MEMBERSHIP_REVALIDATE_MS,
   MESSAGE_RATE_LIMIT,
+  UPGRADE_GLOBAL_RATE_LIMIT,
   UPGRADE_RATE_LIMIT,
+  USER_AUTH_RATE_LIMIT,
 } from "./config.js";
 import { clientIp, TRUST_NONE } from "./client-ip.js";
 import { authenticationUnavailable, ChatCloseError } from "./errors.js";
@@ -58,14 +60,23 @@ export function attachChat(server, options = {}) {
     trustProxyFn = TRUST_NONE,
     authFailureLimit = AUTH_FAILURE_LIMIT,
     upgradeRateLimit = UPGRADE_RATE_LIMIT,
+    // Teto do processo inteiro (todos os IPs somados): um único contador por instância.
+    upgradeGlobalRateLimit = UPGRADE_GLOBAL_RATE_LIMIT,
+    // Por usuário autenticado (ID do Discord validado): autenticações por minuto.
+    userAuthRateLimit = USER_AUTH_RATE_LIMIT,
     maxPendingPerIp = MAX_PENDING_AUTH_PER_IP,
     maxPendingTotal = MAX_PENDING_AUTH_TOTAL,
+    // Aceite dos documentos legais (legal/gate.js): `async (user) => void`, lança
+    // ChatCloseError se o usuário não aceitou as versões atuais. null = sem exigência
+    // (apenas testes do chat; server.js sempre configura).
+    requireLegalAcceptance = null,
   } = options;
 
   const wss = new WebSocketServer({ noServer: true, maxPayload, clientTracking: true });
 
   const context = {
     authenticate,
+    requireLegalAcceptance,
     authTimeoutMs,
     logger,
     rooms,
@@ -76,6 +87,8 @@ export function attachChat(server, options = {}) {
     frameLimiter: createSlidingWindowLimiter({ ...frameRateLimit, now }),
     authFailures: createSlidingWindowLimiter({ ...authFailureLimit, now }),
     upgrades: createSlidingWindowLimiter({ ...upgradeRateLimit, now }),
+    upgradesGlobal: createSlidingWindowLimiter({ ...upgradeGlobalRateLimit, now }),
+    userAuths: createSlidingWindowLimiter({ ...userAuthRateLimit, now }),
     pending: new Map(), // ip -> sockets ainda não autenticados
     pendingTotal: 0,
     userConnections: new Map(), // userId -> quantidade de conexões autenticadas
@@ -101,6 +114,8 @@ export function attachChat(server, options = {}) {
     if (!blocked.allowed) return rejectUpgrade(socket, 429, "Too Many Requests", blocked.retryAfterMs);
     const rate = context.upgrades.hit(ip);
     if (!rate.allowed) return rejectUpgrade(socket, 429, "Too Many Requests", rate.retryAfterMs);
+    const overall = context.upgradesGlobal.hit("all");
+    if (!overall.allowed) return rejectUpgrade(socket, 503, "Service Unavailable", overall.retryAfterMs);
     if ((context.pending.get(ip) ?? 0) >= maxPendingPerIp) return rejectUpgrade(socket, 429, "Too Many Requests", authTimeoutMs);
     if (context.pendingTotal >= maxPendingTotal) return rejectUpgrade(socket, 503, "Service Unavailable", authTimeoutMs);
 
@@ -124,6 +139,8 @@ export function attachChat(server, options = {}) {
     context.frameLimiter.sweep();
     context.authFailures.sweep();
     context.upgrades.sweep();
+    context.upgradesGlobal.sweep();
+    context.userAuths.sweep();
     authenticate.tokens?.sweep?.();
   }, heartbeatIntervalMs);
   heartbeat.unref?.();
@@ -185,10 +202,12 @@ const AUTH_FAILURE_REASONS = new Set([
   "binary_not_supported",
   "auth_in_progress",
   "invalid_instance",
-  "instance_not_found",
-  "not_in_instance",
   "too_many_frames",
 ]);
+// Não contam por IP: "not_in_instance" e "instance_not_found" só acontecem com um token VÁLIDO
+// (usuário identificado, que pode ter saído da instância). Atrás do proxy do Discord, contá-los
+// por IP deixaria poucos usuários legítimos bloquearem todos; o custo no Discord já é limitado
+// pelo cache de instâncias e pelo respeito ao 429, e a conta tem a própria cota (userAuths).
 
 function handleConnection(ws, context, ip) {
   const { authenticate, authTimeoutMs, logger, rooms, frameLimiter } = context;
@@ -265,6 +284,20 @@ function handleConnection(ws, context, ip) {
       const result = await authenticate({ accessToken, instanceId });
       if (ws.readyState !== WebSocket.OPEN) return;
       clearTimeout(authTimer);
+
+      // Cota por conta (ID vindo do Discord, nunca do cliente): contém tempestades de reconexão.
+      // Motivo próprio: o cliente explica que é excesso de tentativas da conta, não de janelas abertas.
+      if (!context.userAuths.hit(result.user.id).allowed) {
+        return closeWith(ws, CloseCode.RATE_LIMITED, "too_many_auth_attempts");
+      }
+
+      // Aceite dos Termos/ciência da Política para as versões atuais, verificado no servidor
+      // ANTES de entrar na sala: chamar o WebSocket direto não contorna a tela de aceite.
+      // Falha do armazenamento fecha com 1013 (tentar de novo), nunca libera.
+      if (context.requireLegalAcceptance) {
+        await context.requireLegalAcceptance(result.user);
+        if (ws.readyState !== WebSocket.OPEN) return;
+      }
 
       // Limites de conexão (checados após saber quem é o usuário e qual a sala).
       if ((context.userConnections.get(result.user.id) ?? 0) >= context.maxConnectionsPerUser) {

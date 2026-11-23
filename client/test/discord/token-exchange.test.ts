@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { exchangeCodeForToken } from '@/discord/api';
-import { DiscordSessionError } from '@/discord/errors';
+import { exchangeCodeForToken, fetchCurrentGuild } from '@/discord/api';
+import { DiscordSessionError, requiresReload } from '@/discord/errors';
+import { HTTP_TIMEOUTS } from '@/lib/http';
 
 /*
  * Compatibilidade do fluxo OAuth do client com as respostas de POST /api/token,
@@ -22,7 +23,21 @@ async function failure(promise: Promise<unknown>) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
+
+/** fetch que só termina quando abortado (backend acordando, proxy travado). */
+function hangingFetch() {
+  const signals: AbortSignal[] = [];
+  vi.stubGlobal('fetch', (_url: string, init: RequestInit) => {
+    signals.push(init.signal!);
+    return new Promise<Response>((_, reject) =>
+      init.signal!.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError'))),
+    );
+  });
+  return signals;
+}
 
 describe('exchangeCodeForToken × POST /api/token', () => {
   it('sucesso devolve o access_token', async () => {
@@ -45,5 +60,50 @@ describe('exchangeCodeForToken × POST /api/token', () => {
     expect((await failure(exchangeCodeForToken('c'))).detail).toBe('HTTP 400 · invalid_grant');
     respond(502, { error: 'discord_unreachable' });
     expect((await failure(exchangeCodeForToken('c'))).code).toBe('token_exchange_failed');
+  });
+});
+
+describe('M2: prazos da troca de código e do nome do servidor', () => {
+  it('/api/token sem resposta em 30 s → backend_timeout (com "Tentar novamente", sem recarregar)', async () => {
+    vi.useFakeTimers();
+    const signals = hangingFetch();
+    const pending = failure(exchangeCodeForToken('codigo'));
+    await vi.advanceTimersByTimeAsync(HTTP_TIMEOUTS.tokenExchange - 1);
+    expect(signals[0]!.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const error = await pending;
+    expect(error).toBeInstanceOf(DiscordSessionError);
+    expect(error.code).toBe('backend_timeout');
+    expect(error.detail).toBe('sem resposta em 30 s');
+    expect(error.message).toMatch(/pode estar sendo iniciado/i);
+    expect(requiresReload(error.code)).toBe(false);
+    expect(signals[0]!.aborted).toBe(true);
+  });
+
+  it('falha de rede continua backend_unreachable; página HTML do proxy também', async () => {
+    vi.stubGlobal('fetch', async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    expect((await failure(exchangeCodeForToken('c'))).code).toBe('backend_unreachable');
+    vi.stubGlobal('fetch', async () => new Response('<html>502</html>', { status: 502 }));
+    const error = await failure(exchangeCodeForToken('c'));
+    expect(error.code).toBe('backend_unreachable');
+    expect(error.detail).toBe('HTTP 502');
+  });
+
+  it('nome do servidor: sem resposta em 5 s vira null e não trava a sessão', async () => {
+    vi.useFakeTimers();
+    const signals = hangingFetch();
+    const pending = fetchCurrentGuild('tok', '1');
+    await vi.advanceTimersByTimeAsync(HTTP_TIMEOUTS.optional);
+    await expect(pending).resolves.toBeNull();
+    expect(signals[0]!.aborted).toBe(true);
+  });
+
+  it('nome do servidor: lista válida encontra o servidor; resposta inválida vira null', async () => {
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify([{ id: '1', name: 'Servidor', icon: null }]), { status: 200 }));
+    await expect(fetchCurrentGuild('tok', '1')).resolves.toMatchObject({ id: '1', name: 'Servidor' });
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ message: 'x' }), { status: 200 }));
+    await expect(fetchCurrentGuild('tok', '1')).resolves.toBeNull();
   });
 });
