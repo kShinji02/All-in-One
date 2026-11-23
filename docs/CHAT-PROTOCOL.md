@@ -79,7 +79,7 @@ a mensagem estiver no histórico (100 mensagens) e a sala existir.
 | Frames | 30 por conexão a cada 10 s → fecha com `4029 too_many_frames` |
 | Conexões | 3 por usuário, 50 por sala |
 | Revalidação | a cada 60 s o servidor consulta os membros da instância; quem saiu é desconectado |
-| Caches no servidor | `/users/@me` por 60 s (chave: SHA-256 do token); token recusado (401/403) por 60 s; membros da instância por 20 s |
+| Caches no servidor | `/oauth2/@me` por 60 s, nunca além do vencimento do token (chave: SHA-256 do token); token recusado (401/403) por 60 s; membros da instância por 20 s |
 
 ## Códigos de fechamento
 

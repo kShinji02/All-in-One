@@ -371,7 +371,7 @@ afterEach(async () => {
 
 async function startLegalApp({ store = createMemoryAcceptanceStore(), documents = docs(), discord = defaultDiscord(), routerOptions = {} } = {}) {
   const logger = quietLogger();
-  const tokens = createTokenValidator({ fetchImpl: discord.fetchImpl, logger });
+  const tokens = createTokenValidator({ applicationId: APP_ID, fetchImpl: discord.fetchImpl, logger });
   const gate = createLegalGate({ store, documents });
   const router = createLegalRouter({ validateToken: (t) => tokens.validate(t), gate, documents, appVersion: "1.0.0+test", logger, ...routerOptions });
   const app = createApp({ logger, legalRouter: router, legalStore: store.kind });

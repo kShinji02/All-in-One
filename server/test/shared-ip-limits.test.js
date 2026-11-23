@@ -28,7 +28,7 @@ import { createMemoryAcceptanceStore } from "../legal/acceptance-store.js";
 import { resolveLegalDocuments } from "../legal/config.js";
 import { createLegalGate } from "../legal/gate.js";
 import { createLegalRouter, LEGAL_ACCEPT_IP_RATE_LIMIT, LEGAL_STATUS_IP_RATE_LIMIT } from "../legal/routes.js";
-import { captureLogger, json } from "./helpers/fake-discord.js";
+import { authorizationInfo, captureLogger, json, OAUTH_ME_PATH } from "./helpers/fake-discord.js";
 
 const ORIGIN = "http://localhost:5173";
 const APP = "1215413995645968394";
@@ -50,9 +50,9 @@ function fakeDiscord(rooms) {
     const authorization = init.headers?.Authorization ?? init.headers?.authorization;
     calls.push(pathname);
     if (pathname === "/api/oauth2/token") return json(200, { access_token: `tok-${calls.length}` });
-    if (pathname === "/api/v10/users/@me") {
+    if (pathname === OAUTH_ME_PATH) {
       const m = /^Bearer tok-(\d+)$/.exec(authorization ?? "");
-      return m ? json(200, { id: uid(+m[1]), username: `u${m[1]}`, global_name: null, avatar: null }) : json(401, { message: "401: Unauthorized" });
+      return m ? json(200, authorizationInfo({ id: uid(+m[1]), username: `u${m[1]}`, global_name: null, avatar: null }, { applicationId: APP })) : json(401, { message: "401: Unauthorized" });
     }
     const match = /\/activity-instances\/([^/]+)$/.exec(pathname);
     if (match) {
@@ -88,7 +88,7 @@ async function startBackend({ rooms, accepted = [], time = clock(), chatOptions 
   const documents = resolveLegalDocuments({});
   const store = createMemoryAcceptanceStore();
   for (const id of accepted) await store.recordAcceptance({ userId: id, terms: documents.terms.version, privacy: documents.privacy.version });
-  const tokens = createTokenValidator({ fetchImpl: discord.fetchImpl, logger, now: time.now, ...tokenOptions });
+  const tokens = createTokenValidator({ applicationId: APP, fetchImpl: discord.fetchImpl, logger, now: time.now, ...tokenOptions });
   const gate = createLegalGate({ store, documents, now: time.now });
   const router = createLegalRouter({ validateToken: (t) => tokens.validate(t), gate, documents, logger, now: time.now });
   const app = createApp({ clientId: APP, clientSecret: "fake-secret", fetchImpl: discord.fetchImpl, logger, now: time.now, legalRouter: router });
@@ -282,7 +282,7 @@ describe("tetos globais (um contador por processo, compartilhado)", () => {
     // O teto (3) foi atingido somando as duas vias: a 4ª validação nova é recusada nas duas.
     assert.equal((await connect(wsUrl, { token: "tok-4", instanceId: instance(1) })).result, "1013 discord_unavailable");
     assert.equal(await legalStatus(base, 5), 503);
-    assert.equal(discord.calls.filter((p) => p === "/api/v10/users/@me").length, 3);
+    assert.equal(discord.calls.filter((p) => p === OAUTH_ME_PATH).length, 3);
     await settle(chat);
   });
 

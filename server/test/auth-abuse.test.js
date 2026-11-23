@@ -26,7 +26,7 @@ import {
   TOKEN_VALIDATION_RATE_LIMIT,
   UPGRADE_RATE_LIMIT,
 } from "../chat/config.js";
-import { APP_ID, BOT_TOKEN, captureLogger, createFakeFetch, INSTANCE_1, json } from "./helpers/fake-discord.js";
+import { APP_ID, authorizationInfo, BOT_TOKEN, captureLogger, createFakeFetch, INSTANCE_1, json, OAUTH_ME_PATH } from "./helpers/fake-discord.js";
 
 const ORIGIN = "http://localhost:5173";
 /*
@@ -63,9 +63,9 @@ function fakeDiscord(override = () => null) {
   return createFakeFetch((call) => {
     const forced = override(call);
     if (forced) return forced;
-    if (call.path === "/api/v10/users/@me") {
+    if (call.path === OAUTH_ME_PATH) {
       const match = /^Bearer valid-(\d+)$/.exec(call.authorization ?? "");
-      return match ? json(200, legitUser(Number(match[1]))) : json(401, { message: "401: Unauthorized", code: 0 });
+      return match ? json(200, authorizationInfo(legitUser(Number(match[1])))) : json(401, { message: "401: Unauthorized", code: 0 });
     }
     const instance = call.path.match(/activity-instances\/([^/]+)$/);
     if (instance && call.authorization === `Bot ${BOT_TOKEN}` && decodeURIComponent(instance[1]) === INSTANCE_1) {
@@ -75,7 +75,7 @@ function fakeDiscord(override = () => null) {
   });
 }
 
-const userCalls = (calls) => calls.filter((c) => c.path === "/api/v10/users/@me").length;
+const userCalls = (calls) => calls.filter((c) => c.path === OAUTH_ME_PATH).length;
 const botCalls = (calls) => calls.filter((c) => c.authorization?.startsWith("Bot ")).length;
 
 async function startServer({ fetchImpl, time = clock(), chatOptions = {}, tokenOptions = {} }) {
@@ -454,7 +454,7 @@ describe("429 do Discord e Retry-After", () => {
   test("429 global: nenhuma validação chama o Discord até o Retry-After passar", async () => {
     let limited = true;
     const { fetchImpl, calls } = fakeDiscord((call) =>
-      limited && call.path === "/api/v10/users/@me" ? json(429, { message: "You are being rate limited.", retry_after: 2.5, global: true }) : null,
+      limited && call.path === OAUTH_ME_PATH ? json(429, { message: "You are being rate limited.", retry_after: 2.5, global: true }) : null,
     );
     const { url, chat, time } = await startServer({ fetchImpl });
     assert.deepEqual((await attempt(url, { token: "valid-1" })).close, { code: CloseCode.TRY_AGAIN_LATER, reason: "discord_unavailable" });

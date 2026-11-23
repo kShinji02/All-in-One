@@ -13,10 +13,21 @@ import { createRetryGate, describeResponse, discordGet } from "./discord-api.js"
 import { createSlidingWindowLimiter } from "./rate-limit.js";
 import { ChatCloseError } from "./errors.js";
 
+/** Escopo OAuth2 exigido: sem ele o Discord não devolve o usuário em /oauth2/@me. */
+export const REQUIRED_SCOPE = "identify";
+
 /**
- * Valida o access token OAuth2 do usuário em GET /users/@me.
+ * Valida o access token OAuth2 do usuário em GET /oauth2/@me ("Get Current Authorization
+ * Information"), que devolve a aplicação para a qual o token foi emitido, os escopos e o usuário.
  *
+ * - O token precisa ter sido emitido para ESTA aplicação (`application.id === applicationId`)
+ *   e ter o escopo `identify`. Um token válido de outra aplicação é recusado como inválido:
+ *   quem obtivesse o token de alguém por outro app não consegue se passar por essa pessoa
+ *   aqui nem registrar um aceite em nome dela.
+ * - Sem `applicationId` configurado, toda validação é recusada (1011 server_misconfigured),
+ *   sem chamar o Discord.
  * - A identidade vem SOMENTE da resposta do Discord; nada enviado pelo cliente é usado.
+ * - O cache nunca passa do vencimento do token (`expires`).
  * - O cache é indexado pelo SHA-256 do token; o token em si não é guardado.
  * - Requisições simultâneas com o mesmo token compartilham uma única chamada.
  * - Token recusado (401/403) entra num cache NEGATIVO curto, também por hash: repetir o
@@ -26,6 +37,7 @@ import { ChatCloseError } from "./errors.js";
  * - 429 do Discord: respeita o Retry-After (global → todas as validações; senão, só o token).
  */
 export function createTokenValidator({
+  applicationId = null,
   fetchImpl = globalThis.fetch,
   now = Date.now,
   ttlMs = TOKEN_CACHE_TTL_MS,
@@ -43,33 +55,56 @@ export function createTokenValidator({
   const outbound = createSlidingWindowLimiter({ ...validationRateLimit, now });
   const unavailable = () => new ChatCloseError(CloseCode.TRY_AGAIN_LATER, "discord_unavailable");
 
-  async function fetchUser(accessToken, key) {
-    const result = await discordGet("/users/@me", {
+  /** Recusa o token como inválido e guarda o hash no cache negativo (sem nova consulta). */
+  function refuse(key) {
+    remember(invalid, key, now() + invalidTtlMs, invalidMaxEntries);
+    return new ChatCloseError(CloseCode.UNAUTHORIZED, "invalid_token");
+  }
+
+  /** Devolve { user, expiresAtMs } da autorização, ou lança ChatCloseError. */
+  async function fetchAuthorization(accessToken, key) {
+    const result = await discordGet("/oauth2/@me", {
       authorization: `Bearer ${accessToken}`,
       fetchImpl,
       timeoutMs,
     });
 
-    if (result.ok && isDiscordUser(result.body)) return toChatUser(result.body);
-
-    if (result.status === 401 || result.status === 403) {
-      remember(invalid, key, now() + invalidTtlMs, invalidMaxEntries);
-      throw new ChatCloseError(CloseCode.UNAUTHORIZED, "invalid_token");
+    if (result.ok && isAuthorizationInfo(result.body)) {
+      const { application, scopes, user, expires } = result.body;
+      if (application.id !== applicationId) {
+        // Token legítimo, mas de outra aplicação. Só o fato é registrado (sem token nem IDs).
+        logger.warn("[auth] token emitido para outra aplicação recusado.");
+        throw refuse(key);
+      }
+      if (!scopes.includes(REQUIRED_SCOPE)) {
+        logger.warn(`[auth] token sem o escopo "${REQUIRED_SCOPE}" recusado.`);
+        throw refuse(key);
+      }
+      const expiresAtMs = typeof expires === "string" ? Date.parse(expires) : NaN;
+      if (Number.isFinite(expiresAtMs) && expiresAtMs <= now()) throw refuse(key);
+      // Com "identify", o Discord sempre devolve o usuário; sem ele, a resposta é inesperada.
+      if (isDiscordUser(user)) {
+        return { user: toChatUser(user), expiresAtMs: Number.isFinite(expiresAtMs) ? expiresAtMs : Infinity };
+      }
     }
+
+    if (result.status === 401 || result.status === 403) throw refuse(key);
 
     if (result.rateLimit) {
       const { retryAfterMs, global } = result.rateLimit;
       gate.block(global ? "bearer" : `bearer:${key}`, retryAfterMs);
-      logger.warn(`[chat] /users/@me limitado pelo Discord (429, ${global ? "global" : "token"}, ${retryAfterMs} ms)`);
+      logger.warn(`[chat] /oauth2/@me limitado pelo Discord (429, ${global ? "global" : "token"}, ${retryAfterMs} ms)`);
       throw unavailable();
     }
 
-    logger.warn(`[chat] /users/@me indisponível (${describeResponse(result)})`);
+    logger.warn(`[chat] /oauth2/@me indisponível (${describeResponse(result)})`);
     throw new ChatCloseError(CloseCode.TRY_AGAIN_LATER, "discord_unavailable");
   }
 
   return {
     async validate(accessToken) {
+      // Sem o Client ID não há como conferir a aplicação do token: recusa sem chamar o Discord.
+      if (!applicationId) throw new ChatCloseError(CloseCode.INTERNAL_ERROR, "server_misconfigured");
       const key = tokenCacheKey(accessToken);
 
       const cached = cache.get(key);
@@ -90,9 +125,10 @@ export function createTokenValidator({
           logger.warn("[chat] teto de validações de token atingido; recusando temporariamente");
           throw unavailable();
         }
-        pending = fetchUser(accessToken, key)
-          .then((user) => {
-            remember(cache, key, { user, expiresAt: now() + ttlMs }, maxEntries);
+        pending = fetchAuthorization(accessToken, key)
+          .then(({ user, expiresAtMs }) => {
+            // Nunca guarda além do vencimento do próprio token.
+            remember(cache, key, { user, expiresAt: Math.min(now() + ttlMs, expiresAtMs) }, maxEntries);
             return user;
           })
           .finally(() => inflight.delete(key));
@@ -118,6 +154,17 @@ export function createTokenValidator({
 /** Chave de cache: SHA-256 do token. */
 export function tokenCacheKey(accessToken) {
   return createHash("sha256").update(accessToken, "utf8").digest("hex");
+}
+
+/** Formato mínimo de GET /oauth2/@me: aplicação com id e lista de escopos. */
+function isAuthorizationInfo(body) {
+  return (
+    body !== null &&
+    typeof body === "object" &&
+    typeof body.application?.id === "string" &&
+    Array.isArray(body.scopes) &&
+    body.scopes.every((scope) => typeof scope === "string")
+  );
 }
 
 function isDiscordUser(body) {

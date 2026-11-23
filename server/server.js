@@ -72,10 +72,11 @@ const extraOrigins = parseExtraOrigins(process.env.CHAT_EXTRA_ORIGINS);
 console.log(`[config] Origens do chat: perfil "${originProfile}"${extraOrigins.length ? ` + ${extraOrigins.length} extra(s)` : ""}.`);
 for (const warning of deploymentWarnings(process.env)) console.warn(`[config] ${warning}`);
 
-// Validação de tokens OAuth (/users/@me) compartilhada pelo chat e pelas rotas /api/legal:
-// mesmo cache, mesmo cache negativo e mesmo teto de chamadas ao Discord.
+// Validação de tokens OAuth (/oauth2/@me) compartilhada pelo chat e pelas rotas /api/legal:
+// mesmo cache, mesmo cache negativo e mesmo teto de chamadas ao Discord. Só aceita tokens
+// emitidos para esta aplicação (Client ID) com o escopo "identify".
 const retryGate = createRetryGate();
-const tokens = createTokenValidator({ gate: retryGate });
+const tokens = createTokenValidator({ applicationId: clientId, gate: retryGate });
 
 // Aceite dos Termos de Uso / ciência da Política de Privacidade (DATABASE_URL; ver docs/ACEITE-LEGAL.md).
 const legal = createLegalSetup({ env: process.env, validateToken: (token) => tokens.validate(token) });

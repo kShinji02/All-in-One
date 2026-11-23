@@ -67,8 +67,8 @@ Camadas no frontend (`client/src/realtime/`), cada uma testada isoladamente:
 1. O provider só conecta com sessão Discord `ready`, token em memória e `instanceId`.
 2. A conexão abre `wss://<host da página>/api/chat` (mesma origem do `/api/token`).
 3. No `open`, envia `{ type: "auth", accessToken, instanceId }`.
-4. O servidor valida no Discord, nesta ordem: identidade em `/users/@me` e, só se o token for
-   válido, participação na instância em `/applications/{id}/activity-instances/{instanceId}`
+4. O servidor valida no Discord, nesta ordem: identidade em `/oauth2/@me` (o token precisa ser
+   **desta aplicação** e ter o escopo `identify`) e, só se o token for válido, participação na instância em `/applications/{id}/activity-instances/{instanceId}`
    com o Bot Token (limites contra abuso em [SEGURANCA.md](SEGURANCA.md#proteção-da-autenticação-do-websocket-fase-51)). Responde
    `ready` (o próprio usuário) e `history` (até 100 mensagens).
 5. Mensagens novas chegam como `message`. O protocolo completo está em [CHAT-PROTOCOL.md](CHAT-PROTOCOL.md).

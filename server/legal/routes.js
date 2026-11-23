@@ -102,7 +102,7 @@ export function createLegalRouter({
       if (error instanceof ChatCloseError && error.closeCode === CloseCode.UNAUTHORIZED) {
         res.status(401).send({ error: "invalid_token" });
       } else if (error instanceof ChatCloseError) {
-        res.status(503).send({ error: "discord_unavailable" });
+        res.status(503).send({ error: error.reason === "server_misconfigured" ? "server_misconfigured" : "discord_unavailable" });
       } else {
         logger.error("[legal] falha inesperada ao validar o token:", error?.name ?? "erro");
         res.status(503).send({ error: "auth_failed" });

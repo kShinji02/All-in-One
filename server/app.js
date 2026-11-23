@@ -26,6 +26,25 @@ export const TOKEN_EXCHANGE_TIMEOUT_MS = 10_000;
  */
 export const PROXY_DIAGNOSTICS_MAX_LOGS = 20;
 
+/**
+ * Cabeçalhos de todas as respostas HTTP do backend. Ele só serve JSON (a página da Activity
+ * vem do frontend, na Cloudflare), então dá para ser restritivo sem afetar a Activity:
+ * - `nosniff`: o navegador não "adivinha" outro tipo para o conteúdo;
+ * - `no-store`: nada fica em cache (inclui o access_token de /api/token);
+ * - CSP `default-src 'none'; frame-ancestors 'none'` e `X-Frame-Options: DENY`: uma resposta
+ *   da API nunca é executada como página nem exibida em iframe (a Activity é a página do
+ *   frontend, não estas respostas);
+ * - `Referrer-Policy: no-referrer`.
+ * Não define CORS: o frontend chama a API pela mesma origem (proxy do Discord ou do Vite).
+ */
+export const SECURITY_HEADERS = Object.freeze({
+  "X-Content-Type-Options": "nosniff",
+  "Cache-Control": "no-store",
+  "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "no-referrer",
+});
+
 export function countForwardedFor(header) {
   const raw = Array.isArray(header) ? header.join(",") : header ?? "";
   return raw.split(",").filter((value) => value.trim() !== "").length;
@@ -60,6 +79,12 @@ export function createApp({
   const app = express();
   app.set("trust proxy", trustProxy);
   app.disable("x-powered-by");
+  // Respostas dinâmicas e sem cache: ETag não serve para nada e ajuda a identificar o Express.
+  app.set("etag", false);
+  app.use((req, res, next) => {
+    res.set(SECURITY_HEADERS);
+    next();
+  });
 
   const oauthConfigured = Boolean(clientId && clientSecret);
   const perClient = createSlidingWindowLimiter({ ...tokenRateLimit, now });
@@ -154,6 +179,11 @@ export function createApp({
     }
 
     res.send({ access_token: data.access_token });
+  });
+
+  // Qualquer outro caminho ou método: 404 em JSON (sem a página "Cannot GET" do Express).
+  app.use((req, res) => {
+    res.status(404).send({ error: "not_found" });
   });
 
   // Erros não tratados respondem em JSON, sem stack trace, preservando o status

@@ -9,7 +9,7 @@ import { createRetryGate } from "./discord-api.js";
  *
  * Recebe { accessToken, instanceId } do primeiro frame e devolve { user, instanceId }:
  * 1. valida o formato do instanceId (antes de qualquer chamada externa);
- * 2. /users/@me (identidade) — e só se o token for válido, activity-instances
+ * 2. /oauth2/@me (identidade e aplicação de origem do token) — e só se o token for válido, activity-instances
  *    (membros da instância, com o token de bot);
  * 3. confirma que o usuário autenticado está entre os membros da instância.
  *
@@ -25,7 +25,7 @@ export function createDiscordAuthenticator({
   instanceOptions = {},
   // Compartilhados com outras rotas (ex.: /api/legal), para usar o mesmo cache e os mesmos tetos.
   gate = createRetryGate({ now }),
-  tokens = createTokenValidator({ fetchImpl, now, logger, gate, ...tokenOptions }),
+  tokens = createTokenValidator({ applicationId, fetchImpl, now, logger, gate, ...tokenOptions }),
 }) {
   // Um único registro de bloqueios (429) para as duas consultas.
   const instances = createInstanceVerifier({ applicationId, botToken, fetchImpl, now, logger, gate, ...instanceOptions });

@@ -16,6 +16,22 @@ export const INSTANCE_2 = "i-1276580072400224399-gc-912952092627435520-912954213
 export const USER_A = { id: "205519959982473217", username: "ana", global_name: "Ana", avatar: "a1b2c3", discriminator: "0" };
 export const USER_B = { id: "175928847299117063", username: "bruno", global_name: null, avatar: null, discriminator: "0" };
 
+/** Caminho de "Get Current Authorization Information" (validação do token do usuário). */
+export const OAUTH_ME_PATH = "/api/v10/oauth2/@me";
+
+/**
+ * Resposta de GET /oauth2/@me: aplicação do token, escopos, vencimento e usuário.
+ * Por padrão, token desta aplicação (APP_ID) com "identify" e "guilds", válido por 7 dias.
+ */
+export function authorizationInfo(user, { applicationId = APP_ID, scopes = ["identify", "guilds"], expires = new Date(Date.now() + 7 * 86_400_000).toISOString() } = {}) {
+  return {
+    application: { id: applicationId, name: "All-in-One", bot_public: false, bot_require_code_grant: false },
+    scopes,
+    expires,
+    ...(scopes.includes("identify") && user && { user }),
+  };
+}
+
 export function json(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -34,9 +50,9 @@ export function createFakeFetch(handler) {
 /** Cenário padrão: dois usuários válidos; INSTANCE_1 contém os dois, INSTANCE_2 só o B. */
 export function defaultDiscord({ instanceUsers = { [INSTANCE_1]: [USER_A.id, USER_B.id], [INSTANCE_2]: [USER_B.id] } } = {}) {
   return createFakeFetch(({ path, authorization }) => {
-    if (path === "/api/v10/users/@me") {
-      if (authorization === `Bearer ${TOKEN_A}`) return json(200, USER_A);
-      if (authorization === `Bearer ${TOKEN_B}`) return json(200, USER_B);
+    if (path === OAUTH_ME_PATH) {
+      if (authorization === `Bearer ${TOKEN_A}`) return json(200, authorizationInfo(USER_A));
+      if (authorization === `Bearer ${TOKEN_B}`) return json(200, authorizationInfo(USER_B));
       return json(401, { message: "401: Unauthorized", code: 0 });
     }
     const match = path.match(/^\/api\/v10\/applications\/([^/]+)\/activity-instances\/([^/]+)$/);

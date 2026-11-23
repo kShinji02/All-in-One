@@ -8,7 +8,7 @@ import { CloseCode, INVALID_TOKEN_CACHE_TTL_MS, MEMBERSHIP_REVALIDATE_MS, TOKEN_
 import { ChatCloseError } from "../chat/errors.js";
 import { attachChat } from "../chat/index.js";
 import { isAllowedOrigin, parseExtraOrigins, resolveOriginProfile } from "../chat/origin.js";
-import { createFakeFetch, defaultDiscord, json, TOKEN_A, USER_A } from "./helpers/fake-discord.js";
+import { APP_ID, authorizationInfo, createFakeFetch, defaultDiscord, json, TOKEN_A, USER_A } from "./helpers/fake-discord.js";
 
 /*
  * Fase 4.9 — origens por ambiente e cache de tokens OAuth.
@@ -158,7 +158,7 @@ describe("cache de tokens OAuth", () => {
   test("reutilização: dentro do TTL padrão, uma única chamada ao Discord", async () => {
     const { fetchImpl, calls } = defaultDiscord();
     const time = clock();
-    const tokens = createTokenValidator({ fetchImpl, now: time.now });
+    const tokens = createTokenValidator({ applicationId: APP_ID, fetchImpl, now: time.now });
     await tokens.validate(TOKEN_A);
     time.advance(TOKEN_CACHE_TTL_MS - 1);
     await tokens.validate(TOKEN_A);
@@ -167,9 +167,9 @@ describe("cache de tokens OAuth", () => {
 
   test("expiração: token revogado deixa de ser aceito assim que o cache expira", async () => {
     let revoked = false;
-    const { fetchImpl, calls } = createFakeFetch(() => (revoked ? json(401, { message: "401: Unauthorized" }) : json(200, USER_A)));
+    const { fetchImpl, calls } = createFakeFetch(() => (revoked ? json(401, { message: "401: Unauthorized" }) : json(200, authorizationInfo(USER_A))));
     const time = clock();
-    const tokens = createTokenValidator({ fetchImpl, now: time.now });
+    const tokens = createTokenValidator({ applicationId: APP_ID, fetchImpl, now: time.now });
     await tokens.validate(TOKEN_A);
 
     revoked = true; // o usuário revoga o acesso da aplicação no Discord
@@ -182,9 +182,9 @@ describe("cache de tokens OAuth", () => {
   // Fase 5.1: o 401 fica em cache negativo por INVALID_TOKEN_CACHE_TTL_MS e depois expira.
   test("invalidação de respostas negativas: 401 fica em cache só pelo TTL curto e depois consulta de novo", async () => {
     let valid = false;
-    const { fetchImpl, calls } = createFakeFetch(() => (valid ? json(200, USER_A) : json(401, { message: "401: Unauthorized" })));
+    const { fetchImpl, calls } = createFakeFetch(() => (valid ? json(200, authorizationInfo(USER_A)) : json(401, { message: "401: Unauthorized" })));
     const time = clock();
-    const tokens = createTokenValidator({ fetchImpl, now: time.now });
+    const tokens = createTokenValidator({ applicationId: APP_ID, fetchImpl, now: time.now });
     await assert.rejects(tokens.validate(TOKEN_A));
     valid = true;
     time.advance(INVALID_TOKEN_CACHE_TTL_MS - 1);
@@ -198,14 +198,14 @@ describe("cache de tokens OAuth", () => {
 
   test("chamadas simultâneas com o mesmo token compartilham uma única consulta", async () => {
     const { fetchImpl, calls } = defaultDiscord();
-    const tokens = createTokenValidator({ fetchImpl });
+    const tokens = createTokenValidator({ applicationId: APP_ID, fetchImpl });
     await Promise.all(Array.from({ length: 10 }, () => tokens.validate(TOKEN_A)));
     assert.equal(calls.length, 1);
   });
 
   test("o cache guarda só o hash do token, nunca o token", async () => {
     const { fetchImpl } = defaultDiscord();
-    const tokens = createTokenValidator({ fetchImpl });
+    const tokens = createTokenValidator({ applicationId: APP_ID, fetchImpl });
     await tokens.validate(TOKEN_A);
     assert.deepEqual(tokens.keys(), [tokenCacheKey(TOKEN_A)]);
     assert.ok(!tokens.keys().some((key) => key.includes(TOKEN_A)));

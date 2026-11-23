@@ -7,20 +7,7 @@ import { WebSocket } from "ws";
 import { attachChat } from "../chat/index.js";
 import { createDiscordAuthenticator } from "../chat/authenticator.js";
 import { CloseCode } from "../chat/config.js";
-import {
-  APP_ID,
-  BOT_TOKEN,
-  captureLogger,
-  createFakeFetch,
-  defaultDiscord,
-  json,
-  INSTANCE_1,
-  INSTANCE_2,
-  TOKEN_A,
-  TOKEN_B,
-  USER_A,
-  USER_B,
-} from "./helpers/fake-discord.js";
+import { APP_ID, authorizationInfo, BOT_TOKEN, captureLogger, createFakeFetch, defaultDiscord, INSTANCE_1, INSTANCE_2, json, OAUTH_ME_PATH, TOKEN_A, TOKEN_B, USER_A, USER_B } from "./helpers/fake-discord.js";
 
 const servers = [];
 
@@ -118,9 +105,9 @@ test("instanceId malformado → 4000 invalid_instance sem nenhuma chamada ao Dis
 });
 
 test("token inválido tem prioridade: não revela se a instância existe, mesmo que ela responda antes", async () => {
-  // A consulta da instância (404) termina antes do /users/@me (401).
+  // A consulta da instância (404) termina antes do /oauth2/@me (401).
   const { fetchImpl } = createFakeFetch(async ({ path }) => {
-    if (path === "/api/v10/users/@me") {
+    if (path === OAUTH_ME_PATH) {
       await delay(80);
       return json(401, { message: "401: Unauthorized" });
     }
@@ -137,7 +124,7 @@ test("token inválido tem prioridade: não revela se a instância existe, mesmo 
 
 test("token válido com instância inexistente → 4003 instance_not_found", async () => {
   const { fetchImpl } = createFakeFetch(async ({ path }) =>
-    path === "/api/v10/users/@me" ? json(200, USER_A) : json(404, { message: "Unknown Activity Instance" }),
+    path === OAUTH_ME_PATH ? json(200, authorizationInfo(USER_A)) : json(404, { message: "Unknown Activity Instance" }),
   );
   const { url } = await startServer(fetchImpl);
   assert.deepEqual((await authenticateOver(url, { accessToken: TOKEN_A, instanceId: "i-1-gc-2-3" })).close, {
