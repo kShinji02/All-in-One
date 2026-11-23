@@ -5,6 +5,7 @@ import { createMemoryAcceptanceStore, createPostgresAcceptanceStore, createUnava
 import { resolveAppVersion, resolveLegalDocuments } from "./config.js";
 import { createLegalGate } from "./gate.js";
 import { createLegalRouter } from "./routes.js";
+import { createDocumentIntegrity, verifyPublishedDocuments } from "./integrity.js";
 
 const PACKAGE_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
@@ -33,7 +34,16 @@ export function createLegalSetup({ env = process.env, validateToken, logger = co
     logger.warn("[config] DATABASE_URL não definido: o aceite dos documentos legais fica indisponível e o chat recusará conexões.");
   }
 
+  for (const key of ["terms", "privacy"]) {
+    if (!documents[key].sha256) {
+      logger.warn(`[config] Documento "${key}" (versão ${documents[key].version}) sem hash SHA-256 registrado: os aceites ficam sem a identificação do conteúdo.`);
+    }
+  }
+
   const gate = createLegalGate({ store, documents });
-  const router = createLegalRouter({ validateToken, gate, documents, appVersion: resolveAppVersion(env, PACKAGE_VERSION), logger });
-  return { documents, store, gate, router };
+  const integrity = createDocumentIntegrity();
+  const router = createLegalRouter({ validateToken, gate, documents, integrity, appVersion: resolveAppVersion(env, PACKAGE_VERSION), logger });
+  /** Confere o conteúdo publicado com os hashes registrados (sem rede se não houver hash). */
+  const verifyDocuments = (options = {}) => verifyPublishedDocuments(documents, { logger, ...options }).then((result) => integrity.apply(result));
+  return { documents, store, gate, router, integrity, verifyDocuments };
 }

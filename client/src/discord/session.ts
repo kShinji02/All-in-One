@@ -1,10 +1,11 @@
 import { env } from '@/config/env';
 import { exchangeCodeForToken, fetchCurrentGuild } from '@/discord/api';
 import { userAvatarUrl } from '@/discord/cdn';
-import { OAUTH_SCOPES, READY_TIMEOUT_MS } from '@/discord/config';
+import { COMMAND_TIMEOUT_MS, OAUTH_SCOPES, READY_TIMEOUT_MS } from '@/discord/config';
 import { DiscordSessionError, describeUnknownError } from '@/discord/errors';
 import { getDiscordSdk } from '@/discord/sdk';
 import type { ConnectionStep, DiscordChannel, DiscordSession } from '@/discord/types';
+import { withTimeout as withCommandTimeout } from '@/lib/with-timeout';
 
 /** Token mantido apenas em memória, para uso futuro dos módulos. Nunca é exibido nem persistido. */
 let accessToken: string | null = null;
@@ -84,7 +85,8 @@ async function runSession(): Promise<DiscordSession> {
   onStep('authenticate');
   let auth: Awaited<ReturnType<typeof sdk.commands.authenticate>>;
   try {
-    auth = await sdk.commands.authenticate({ access_token: token });
+    // O SDK não rejeita comandos sem resposta: sem prazo, a sessão ficaria presa em "Autenticação".
+    auth = await withCommandTimeout(sdk.commands.authenticate({ access_token: token }), COMMAND_TIMEOUT_MS, 'AUTHENTICATE');
   } catch (error) {
     throw new DiscordSessionError('authenticate_failed', describeUnknownError(error));
   }
@@ -119,7 +121,8 @@ async function runSession(): Promise<DiscordSession> {
 
   async function fetchChannel(id: string): Promise<DiscordChannel | null> {
     try {
-      const result = await sdk.commands.getChannel({ channel_id: id });
+      // Dado opcional: sem resposta no prazo, segue sem o nome do canal.
+      const result = await withCommandTimeout(sdk.commands.getChannel({ channel_id: id }), COMMAND_TIMEOUT_MS, 'GET_CHANNEL');
       return { id: result.id, name: result.name ?? null };
     } catch {
       return null;

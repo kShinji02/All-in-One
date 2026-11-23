@@ -19,7 +19,8 @@ Visão técnica em [ARQUITETURA.md](ARQUITETURA.md); protocolo do chat em [CHAT-
 | 9 | Abrir links externos | [Chat: links externos](#chat-links-externos) | `client/test/chat/external-links.test.tsx` |
 | 10 | Recuperar um painel após erro | [Painéis com erro](#painéis-com-erro) | `client/test/home/HomeView.test.tsx` (só automatizado) |
 | 11 | Aceitar os Termos e a Política | [Aceite dos documentos legais](#aceite-dos-documentos-legais) | `client/test/legal/`, `server/test/legal-acceptance.test.js` |
-| 12 | Backend lento ou acordando | [Backend lento ou acordando](#backend-lento-ou-acordando) | `client/test/lib/http.test.ts`, `client/test/legal/LegalGate.test.tsx` |
+| 12 | Backend lento ou acordando | [Backend lento ou acordando](#backend-lento-ou-acordando) | `client/test/lib/http.test.ts`, `client/test/legal/LegalGate.test.tsx`, `client/test/discord/participants-decoupling.test.tsx` |
+| 13 | Convidar, compartilhar tela e ocultar mensagens | [Convite, tela e moderação local](#convite-tela-e-moderação-local) | `client/test/participants/invite-and-screenshare.test.tsx`, `client/test/chat/ChatPanel.test.tsx` |
 
 Os testes automatizados rodam com `npm test` em `server/` e em `client/`.
 
@@ -170,6 +171,7 @@ Ao final, mostra seu nome e avatar, o servidor, o canal, a plataforma, o ID da i
 | `token_exchange_failed · invalid_grant` | O código expirou ou já foi usado. Clique em **Tentar novamente**. |
 | `backend_unreachable` | O Express não está rodando na porta 3001. |
 | `backend_timeout` | O backend não respondeu à troca do código em 30 s (no Render Free, o serviço pode estar acordando). Aguarde e clique em **Tentar novamente**. |
+| `backend_unavailable` | O proxy respondeu 502/503/504 sem passar pelo backend (Render acordando ou fora do ar, ou URL Mapping `/api` errado). A sessão tenta sozinha 3 vezes antes de mostrar o erro. |
 | `authenticate_failed` | O token foi rejeitado pelo cliente do Discord. |
 
 Os erros de handshake (`ready_timeout`, `sdk_init_failed`) mostram **Recarregar Activity** em vez de
@@ -219,10 +221,20 @@ minuto, porque o serviço precisa acordar.
 
 | Passo | Ação | Resultado esperado |
 |---|---|---|
-| 1 | Com o backend parado ou suspenso, abra a Activity | Depois do prazo, **Sessão Discord** mostra `backend_timeout` (ou `backend_unreachable`, se a conexão for recusada na hora) com **Tentar novamente** |
-| 2 | Espere o backend responder e clique em **Tentar novamente** | O fluxo recomeça com um novo código OAuth e conclui |
-| 3 | Se o prazo estourar na verificação do aceite | **Não foi possível verificar o aceite** explica que o servidor pode estar iniciando, com **Tentar novamente** |
-| 4 | Se o prazo estourar ao clicar em **Aceitar e continuar** | A tela continua com a caixa marcada e a mensagem de demora; clicar de novo é seguro (o servidor não duplica o registro) |
+| 1 | Com o backend parado ou suspenso, abra a Activity | **Sessão Discord** mostra "O servidor está iniciando ou instável. Tentando de novo automaticamente (1 de 3)…" e tenta sozinha até 3 vezes (esperas de ~1,5–3 s, 3–6 s e 6–12 s) |
+| 2 | Se o backend voltar durante as tentativas | A sessão conclui sozinha, sem clicar em nada |
+| 3 | Se continuar fora depois das 3 tentativas | Aparece o erro (`backend_unavailable`, `backend_timeout` ou `backend_unreachable`) com **Tentar novamente**, que recomeça com um novo código OAuth |
+| 4 | Se o servidor demorar na verificação do aceite | Depois de 5 s, a tela explica que ele pode estar iniciando; falhas passageiras também repetem sozinhas até 3 vezes antes de **Não foi possível verificar o aceite** |
+| 5 | Se o prazo estourar ao clicar em **Aceitar e continuar** | A tela continua com a caixa marcada e a mensagem de demora; clicar de novo é seguro (o servidor não duplica o registro) |
+
+## Convite, tela e moderação local
+
+| Passo | Ação | Resultado esperado |
+|---|---|---|
+| 1 | Em **Participantes**, clique em **Convidar para a Activity** | Abre a tela de convite do próprio Discord (no celular, depende do app; se não abrir, aparece a orientação de usar o convite do Discord) |
+| 2 | Leia o painel **Compartilhar tela** no computador e no celular | Mostra só o caminho do dispositivo atual; o compartilhamento é feito pelos controles da chamada de voz do Discord |
+| 3 | Com A e B no chat, A clica em **Ocultar** numa mensagem de B | As mensagens de B somem só na tela de A ("… ocultada(s) só para você", com **Mostrar**); B e os demais continuam vendo tudo |
+| 4 | B envia a mesma mensagem 4 vezes em menos de 1 minuto | A 4ª fica "Não enviada: mesma mensagem enviada muitas vezes seguidas"; ninguém a recebe |
 
 ## Participantes
 

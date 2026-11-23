@@ -35,7 +35,9 @@ export async function exchangeCodeForToken(code: string, timeoutMs: number = HTT
     throw new DiscordSessionError('server_misconfigured');
   }
   if (typeof body.error !== 'string') {
-    // Resposta sem o formato do nosso backend: o proxy não alcançou o Express.
+    // Resposta sem o formato do nosso backend: o proxy (Discord/Render) não alcançou o Express.
+    // 502/503/504 = backend acordando ou fora do ar por instantes (passageiro).
+    if (status === 502 || status === 503 || status === 504) throw new DiscordSessionError('backend_unavailable', `HTTP ${status}`);
     throw new DiscordSessionError('backend_unreachable', `HTTP ${status}`);
   }
   const detail = typeof body.discordError === 'string' ? body.discordError : body.error;

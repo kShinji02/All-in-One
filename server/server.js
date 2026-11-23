@@ -121,6 +121,8 @@ const chat = attachChat(server, {
 
 server.listen(listenOptions.port, listenOptions.host, () => {
   console.log(`Server listening on ${describeListen(listenOptions)}`);
+  // Confere os documentos publicados com os hashes registrados (não bloqueia a inicialização).
+  legal.verifyDocuments().catch(() => undefined);
 });
 
 // O Render envia SIGTERM ao parar ou reimplantar: encerra o chat e o HTTP de forma limpa.

@@ -28,8 +28,8 @@ export function HomeView({ launch, modules = featureModules }: HomeViewProps) {
             Tudo em um, <span className="text-gradient-brand">direto no canal.</span>
           </h1>
           <p className="mt-5 max-w-xl text-base leading-relaxed text-graphite-300 sm:text-lg">
-            Uma central única para conversar, ver quem está presente, se comunicar e assistir conteúdo
-            junto, sem sair do Discord.
+            Converse em tempo real e veja quem está na Activity, sem sair do Discord. O compartilhamento de tela
+            continua pelo próprio Discord, e novos módulos estão no roteiro abaixo.
           </p>
         </div>
 

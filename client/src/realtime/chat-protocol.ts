@@ -53,6 +53,7 @@ export const KNOWN_ERROR_CODES = [
   'invalid_message',
   'invalid_nonce',
   'message_too_long',
+  'repeated_message',
   'unsupported_message',
 ] as const;
 export type KnownErrorCode = (typeof KNOWN_ERROR_CODES)[number];

@@ -80,15 +80,23 @@ describe('M2: prazos da troca de código e do nome do servidor', () => {
     expect(signals[0]!.aborted).toBe(true);
   });
 
-  it('falha de rede continua backend_unreachable; página HTML do proxy também', async () => {
+  it('falha de rede continua backend_unreachable; 502/503/504 sem o JSON do backend viram backend_unavailable', async () => {
     vi.stubGlobal('fetch', async () => {
       throw new TypeError('Failed to fetch');
     });
     expect((await failure(exchangeCodeForToken('c'))).code).toBe('backend_unreachable');
-    vi.stubGlobal('fetch', async () => new Response('<html>502</html>', { status: 502 }));
-    const error = await failure(exchangeCodeForToken('c'));
-    expect(error.code).toBe('backend_unreachable');
-    expect(error.detail).toBe('HTTP 502');
+    for (const status of [502, 503, 504]) {
+      vi.stubGlobal('fetch', async () => new Response('<html>Bad Gateway</html>', { status }));
+      const error = await failure(exchangeCodeForToken('c'));
+      expect(error.code, String(status)).toBe('backend_unavailable');
+      expect(error.detail).toBe(`HTTP ${status}`);
+    }
+    // Outras respostas fora do formato do backend (ex.: 404 de um proxy mal configurado).
+    vi.stubGlobal('fetch', async () => new Response('<html>Not Found</html>', { status: 404 }));
+    expect((await failure(exchangeCodeForToken('c'))).code).toBe('backend_unreachable');
+    // JSON do backend com 502 (Discord fora): continua token_exchange_failed.
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ error: 'discord_unreachable' }), { status: 502 }));
+    expect((await failure(exchangeCodeForToken('c'))).code).toBe('token_exchange_failed');
   });
 
   it('nome do servidor: sem resposta em 5 s vira null e não trava a sessão', async () => {

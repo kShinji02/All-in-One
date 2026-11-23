@@ -92,3 +92,37 @@ describe('cliente /api/legal', () => {
     await expect(fetchLegalStatus('tok')).resolves.toEqual({ documents: DOCS, accepted: true, acceptedAt: '2026-11-22T00:00:00.000Z' });
   });
 });
+
+describe('cliente /api/legal — hashes SHA-256 dos documentos (Fase 2)', () => {
+  const HASH_T = 'a'.repeat(64);
+  const HASH_P = 'b'.repeat(64);
+  const HASHED = {
+    terms: { ...DOCS.terms, sha256: HASH_T },
+    privacy: { ...DOCS.privacy, sha256: HASH_P },
+  };
+
+  it('aceita sha256 válido ou null; recusa hash malformado (resposta inesperada)', async () => {
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ documents: HASHED, accepted: false, acceptedAt: null }), { status: 200 }));
+    expect((await fetchLegalStatus('tok')).documents).toEqual(HASHED);
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ documents: { terms: { ...DOCS.terms, sha256: null }, privacy: DOCS.privacy }, accepted: false, acceptedAt: null }), { status: 200 }));
+    expect((await fetchLegalStatus('tok')).documents.terms.sha256).toBeNull();
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ documents: { terms: { ...DOCS.terms, sha256: 'xyz' }, privacy: DOCS.privacy }, accepted: false, acceptedAt: null }), { status: 200 }));
+    expect(await code(fetchLegalStatus('tok'))).toBe('unexpected');
+  });
+
+  it('o aceite envia os hashes exibidos (e null quando a versão não tem hash); sem o campo, não envia', async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ accepted: true, acceptedAt: '2026-11-23T00:00:00.000Z' }), { status: 201 });
+    });
+    await submitLegalAcceptance('tok', HASHED);
+    await submitLegalAcceptance('tok', { terms: { ...DOCS.terms, sha256: null }, privacy: { ...DOCS.privacy, sha256: null } });
+    await submitLegalAcceptance('tok', DOCS);
+    expect(bodies).toEqual([
+      { termsVersion: 't-1', privacyVersion: 'p-1', termsSha256: HASH_T, privacySha256: HASH_P },
+      { termsVersion: 't-1', privacyVersion: 'p-1', termsSha256: null, privacySha256: null },
+      { termsVersion: 't-1', privacyVersion: 'p-1' },
+    ]);
+  });
+});

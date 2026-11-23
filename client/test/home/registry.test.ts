@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ChatView } from '@/features/chat/ChatView';
 import { ParticipantsView } from '@/features/participants/ParticipantsView';
+import { ScreenShareView } from '@/features/screenshare/ScreenShareView';
 import { featureModules, isAvailable, modulesInSlot } from '@/features/registry';
 
 describe('registro de módulos (fonte única da Home)', () => {
@@ -28,15 +29,19 @@ describe('registro de módulos (fonte única da Home)', () => {
     expect(new Set(views).size).toBe(views.length);
   });
 
-  it('chat ocupa a área principal; participantes, a coluna lateral', () => {
+  it('chat ocupa a área principal; participantes e o guia de compartilhamento, a coluna lateral', () => {
     expect(modulesInSlot('main').map((m) => [m.id, m.View])).toEqual([['chat', ChatView]]);
-    expect(modulesInSlot('aside').map((m) => [m.id, m.View])).toEqual([['participants', ParticipantsView]]);
+    expect(modulesInSlot('aside').map((m) => [m.id, m.View])).toEqual([
+      ['participants', ParticipantsView],
+      ['screenshare', ScreenShareView],
+    ]);
   });
 
-  it('status do roteiro: chat e participantes disponíveis; comunicação e mídia planejados', () => {
+  it('status do roteiro: chat, participantes e o guia de tela disponíveis; comunicação e mídia planejados', () => {
     expect(featureModules.map((m) => [m.id, m.status])).toEqual([
       ['chat', 'available'],
       ['participants', 'available'],
+      ['screenshare', 'available'],
       ['communication', 'planned'],
       ['media', 'planned'],
     ]);

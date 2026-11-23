@@ -62,6 +62,13 @@ export const FRAME_RATE_LIMIT = Object.freeze({ limit: 30, windowMs: 10_000 });
 export const MAX_CONNECTIONS_PER_USER = 3;
 
 /**
+ * Anti-spam: o mesmo texto (sem diferenciar maiúsculas e espaços) do mesmo usuário, no máximo
+ * 3 vezes a cada 60 s, somando as salas. Acima disso: `{ type: "error", code: "repeated_message" }`
+ * (a mensagem não é publicada). Reenvios com o mesmo nonce (idempotência) não contam.
+ */
+export const REPEATED_MESSAGE_LIMIT = Object.freeze({ limit: 3, windowMs: 60_000 });
+
+/**
  * Fase 5.1 — proteção da autenticação contra abuso.
  *
  * A garantia principal não depende de IP: no máximo TOKEN_VALIDATION_RATE_LIMIT consultas

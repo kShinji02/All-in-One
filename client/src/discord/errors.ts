@@ -1,3 +1,5 @@
+import { env } from '@/config/env';
+
 export type DiscordErrorCode =
   | 'ready_timeout'
   | 'sdk_init_failed'
@@ -6,23 +8,51 @@ export type DiscordErrorCode =
   | 'token_exchange_failed'
   | 'backend_unreachable'
   | 'backend_timeout'
+  | 'backend_unavailable'
   | 'authenticate_failed';
 
+/** Mensagens para o usuário final: nada de comandos, arquivos ou detalhes internos. */
 const messages: Record<DiscordErrorCode, string> = {
   // Timeout não significa recusa: só afirmamos que não houve resposta no prazo.
-  ready_timeout:
-    'O cliente do Discord não respondeu ao handshake a tempo. Recarregue a Activity; se persistir, confira se o Client ID do .env é o da aplicação aberta no Discord.',
-  sdk_init_failed: 'Não foi possível inicializar o Embedded App SDK. Recarregue a Activity pelo Discord.',
+  ready_timeout: 'O Discord não respondeu a tempo ao abrir a Activity. Recarregue a Activity para tentar de novo.',
+  sdk_init_failed: 'Não foi possível iniciar a Activity. Recarregue a Activity pelo Discord.',
   authorize_failed: 'A autorização foi recusada ou cancelada no Discord.',
-  server_misconfigured:
-    'O servidor não tem as credenciais OAuth2 configuradas. Preencha o .env da raiz do projeto e reinicie o backend.',
-  token_exchange_failed: 'O servidor não conseguiu trocar o código de autorização por um token.',
-  backend_unreachable:
-    'O servidor da aplicação (/api) não está respondendo. Inicie o backend com "npm run dev" na pasta server/ e tente novamente.',
+  server_misconfigured: 'O servidor do All-in-One está temporariamente sem configuração para entrar. Tente de novo mais tarde.',
+  token_exchange_failed: 'Não foi possível concluir a entrada com o Discord. Tente novamente em instantes.',
+  backend_unreachable: 'Não foi possível falar com o servidor do All-in-One. Confira sua conexão e tente novamente.',
   backend_timeout:
-    'O servidor da aplicação demorou para responder; ele pode estar sendo iniciado, o que leva até um minuto. Aguarde alguns segundos e tente novamente.',
-  authenticate_failed: 'O Discord recusou a autenticação com o token obtido.',
+    'O servidor do All-in-One demorou para responder; ele pode estar sendo iniciado, o que leva até um minuto. Aguarde alguns segundos e tente novamente.',
+  backend_unavailable:
+    'O servidor do All-in-One está iniciando ou temporariamente indisponível. Isso costuma levar menos de um minuto; tente novamente em instantes.',
+  authenticate_failed: 'O Discord não confirmou a sua entrada. Tente novamente.',
 };
+
+/**
+ * Orientações técnicas, exibidas SOMENTE em desenvolvimento (`npm run dev`): em produção, o
+ * usuário nunca vê comandos ou nomes de arquivos.
+ */
+const devHints: Partial<Record<DiscordErrorCode, string>> = {
+  ready_timeout: 'Confira se o VITE_DISCORD_CLIENT_ID do .env é o da aplicação aberta no Discord.',
+  server_misconfigured: 'Preencha VITE_DISCORD_CLIENT_ID e DISCORD_CLIENT_SECRET no .env da raiz e reinicie o backend.',
+  backend_unreachable: 'Inicie o backend com "npm run dev" na pasta server/.',
+  backend_unavailable: 'Confira se o backend está rodando (npm run dev em server/) e o túnel/URL Mapping.',
+};
+
+/** Texto exibido para um código. `isDev` acrescenta a orientação técnica de desenvolvimento. */
+export function describeSessionError(code: DiscordErrorCode, { isDev = env.isDev }: { isDev?: boolean } = {}): string {
+  const hint = isDev ? devHints[code] : undefined;
+  return hint ? `${messages[code]} ${hint}` : messages[code];
+}
+
+/**
+ * Falhas passageiras do backend (Render acordando, proxy sem resposta, rede instável): a
+ * sessão tenta de novo sozinha algumas vezes antes de mostrar o erro.
+ */
+const TRANSIENT: ReadonlySet<string> = new Set<DiscordErrorCode>(['backend_timeout', 'backend_unavailable', 'backend_unreachable']);
+
+export function isTransientSessionError(code: string): boolean {
+  return TRANSIENT.has(code);
+}
 
 /**
  * Erros que acontecem antes ou durante o handshake. O SDK envia o handshake uma
@@ -42,7 +72,7 @@ export class DiscordSessionError extends Error {
   readonly detail: string | null;
 
   constructor(code: DiscordErrorCode, detail: string | null = null) {
-    super(messages[code]);
+    super(describeSessionError(code));
     this.name = 'DiscordSessionError';
     this.code = code;
     this.detail = detail;

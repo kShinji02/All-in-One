@@ -1,7 +1,8 @@
-import { useMemo, type ReactNode } from 'react';
-import { CircleAlert, RotateCcw, UserRoundX, Users } from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
+import { CircleAlert, RotateCcw, UserPlus, UserRoundX, Users } from 'lucide-react';
 import { GlassPanel } from '@/components/ui/GlassPanel';
 import { StatusPill } from '@/components/ui/StatusPill';
+import { openInviteDialog } from '@/discord/invite';
 import type { DiscordParticipant, DiscordState } from '@/discord/types';
 import { useDiscord } from '@/discord/useDiscord';
 import { ParticipantItem } from '@/features/participants/components/ParticipantItem';
@@ -15,8 +16,15 @@ const collator = new Intl.Collator('pt-BR', { sensitivity: 'base' });
 
 /** Seção PARTICIPANTES: usuários conectados à mesma instância da Activity. */
 export function ParticipantsView() {
-  const { state: discord } = useDiscord();
+  const { state: discord, sdkReady } = useDiscord();
   const { state, retry } = useParticipants();
+  const [inviteFailed, setInviteFailed] = useState(false);
+
+  async function invite() {
+    setInviteFailed(false);
+    const result = await openInviteDialog({ sdkReady });
+    setInviteFailed(result === 'failed');
+  }
   const currentUserId = discord.status === 'ready' ? discord.session.user.id : null;
 
   // Usuário atual primeiro; demais em ordem alfabética.
@@ -109,6 +117,24 @@ export function ParticipantsView() {
           </ul>
         ))}
 
+      {sdkReady && (
+        <div className="mt-5">
+          <button
+            type="button"
+            onClick={invite}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-sm font-medium text-graphite-100 transition hover:border-electric-400/40 hover:bg-electric-500/[0.06] active:scale-[0.98]"
+          >
+            <UserPlus className="size-4 text-electric-400" aria-hidden="true" />
+            Convidar para a Activity
+          </button>
+          {inviteFailed && (
+            <p role="alert" className="mt-2 text-xs leading-relaxed text-graphite-400">
+              O Discord não abriu o convite neste dispositivo. Use o botão de convite do próprio Discord.
+            </p>
+          )}
+        </div>
+      )}
+
       <p className="mt-5 text-[11px] leading-relaxed text-graphite-400">
         Mostra quem abriu esta Activity, não necessariamente todos os usuários do canal de voz.
       </p>
@@ -122,7 +148,7 @@ function InactiveNotice({ discord }: { discord: DiscordState }) {
     case 'connecting':
       return (
         <Notice icon={<Users className="size-5" />} title="Conectando ao Discord">
-          A lista aparece assim que o SDK concluir o handshake.
+          A lista aparece assim que a conexão com o Discord terminar.
         </Notice>
       );
     case 'error':
@@ -135,7 +161,7 @@ function InactiveNotice({ discord }: { discord: DiscordState }) {
     case 'misconfigured':
       return (
         <Notice icon={<CircleAlert className="size-5 text-signal-warn" />} title="Client ID não configurado">
-          Sem o Client ID, o SDK do Discord não é iniciado e a lista não pode ser carregada.
+          A Activity não está configurada para se conectar ao Discord, então a lista não pode ser carregada.
         </Notice>
       );
     default:

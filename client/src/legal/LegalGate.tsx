@@ -5,9 +5,10 @@ import { ConnectionPanel } from '@/features/session/ConnectionPanel';
 import { fetchLegalStatus, LegalApiError, submitLegalAcceptance, type LegalDocuments, type LegalErrorCode } from '@/legal/api';
 import { AcceptanceScreen, DeclinedScreen, LegalCheckFailed, LegalChecking } from '@/legal/components/LegalScreens';
 import { exitActivity } from '@/legal/exit-activity';
+import { backoffDelay } from '@/lib/backoff';
 
 export type LegalGateState =
-  | { status: 'checking' }
+  | { status: 'checking'; retry?: { attempt: number; maxAttempts: number } }
   | { status: 'required'; documents: LegalDocuments; submitting: boolean; error: LegalErrorCode | null; updated: boolean }
   | { status: 'declined'; documents: LegalDocuments; exitFailed: boolean }
   | { status: 'failed'; error: LegalErrorCode }
@@ -16,6 +17,18 @@ export type LegalGateState =
 /** Backoff das revalidações pedidas pelo chat. */
 export const LEGAL_RECHECK_MAX_DELAY_MS = 30_000;
 export const LEGAL_RECHECK_STABLE_MS = 60_000;
+
+/**
+ * Novas tentativas automáticas da verificação quando o servidor falha de forma passageira
+ * (sem resposta no prazo, 5xx, rede instável). Depois delas, aparece "Tentar novamente".
+ */
+export interface LegalAutoRetry {
+  maxAttempts: number;
+  baseMs: number;
+  maxMs: number;
+}
+export const LEGAL_AUTO_RETRY: LegalAutoRetry = Object.freeze({ maxAttempts: 3, baseMs: 3_000, maxMs: 15_000 });
+const TRANSIENT_LEGAL_ERRORS: ReadonlySet<LegalErrorCode> = new Set<LegalErrorCode>(['unavailable', 'timeout']);
 
 interface LegalGateContextValue {
   /**
@@ -43,7 +56,15 @@ export function useLegalGate(): LegalGateContextValue {
  * - Fora do Discord (sem SDK) não há sessão nem recursos; a Home aparece como antes.
  * - O servidor também exige o aceite no chat: contornar esta tela não abre a sala.
  */
-export function LegalGate({ children }: { children: ReactNode }) {
+interface LegalGateProps {
+  children: ReactNode;
+  /** Novas tentativas automáticas (injetável nos testes). */
+  autoRetry?: LegalAutoRetry;
+  /** Fonte do jitter do backoff (injetável nos testes). */
+  random?: () => number;
+}
+
+export function LegalGate({ children, autoRetry = LEGAL_AUTO_RETRY, random = Math.random }: LegalGateProps) {
   const { state: discord } = useDiscord();
   const [state, setState] = useState<LegalGateState>({ status: 'checking' });
   const [attempt, setAttempt] = useState(0);
@@ -59,6 +80,12 @@ export function LegalGate({ children }: { children: ReactNode }) {
   const nextDelay = useRef(0);
   const streak = useRef(0);
   const acceptedSince = useRef<number | null>(null);
+  /** Tentativas automáticas desde a última ação do usuário ou resposta do servidor. */
+  const autoRetries = useRef(0);
+  const pendingRetry = useRef<{ attempt: number; maxAttempts: number } | null>(null);
+  // Opções em referências: um objeto novo a cada renderização não refaz a verificação.
+  const retryOptions = useRef({ autoRetry, random });
+  retryOptions.current = { autoRetry, random };
 
   useEffect(() => {
     if (!sessionReady) return;
@@ -67,7 +94,9 @@ export function LegalGate({ children }: { children: ReactNode }) {
     const controller = new AbortController();
     const delay = nextDelay.current;
     nextDelay.current = 0;
-    setState({ status: 'checking' });
+    const retry = pendingRetry.current;
+    pendingRetry.current = null;
+    setState(retry ? { status: 'checking', retry } : { status: 'checking' });
 
     const run = () => {
       const token = getAccessToken();
@@ -78,6 +107,7 @@ export function LegalGate({ children }: { children: ReactNode }) {
       fetchLegalStatus(token, { signal: controller.signal }).then(
         (status) => {
           if (!active) return;
+          autoRetries.current = 0;
           setState(
             status.accepted
               ? { status: 'accepted' }
@@ -86,7 +116,18 @@ export function LegalGate({ children }: { children: ReactNode }) {
         },
         (error: unknown) => {
           if (!active || (error instanceof LegalApiError && error.code === 'aborted')) return;
-          setState({ status: 'failed', error: error instanceof LegalApiError ? error.code : 'unexpected' });
+          const code: LegalErrorCode = error instanceof LegalApiError ? error.code : 'unexpected';
+          const { autoRetry: policy, random: jitter } = retryOptions.current;
+          if (TRANSIENT_LEGAL_ERRORS.has(code) && autoRetries.current < policy.maxAttempts) {
+            // Servidor acordando ou instável: tenta de novo sozinho (backoff com jitter), sem liberar nada.
+            autoRetries.current += 1;
+            pendingRetry.current = { attempt: autoRetries.current, maxAttempts: policy.maxAttempts };
+            nextDelay.current = backoffDelay(autoRetries.current, policy, jitter);
+            setState({ status: 'checking', retry: pendingRetry.current });
+            setAttempt((n) => n + 1);
+            return;
+          }
+          setState({ status: 'failed', error: code });
         },
       );
     };
@@ -106,6 +147,7 @@ export function LegalGate({ children }: { children: ReactNode }) {
 
   /** Nova consulta imediata, pedida pelo usuário (botão "Tentar novamente"). */
   const recheckNow = useCallback(() => {
+    autoRetries.current = 0;
     nextDelay.current = 0;
     setAttempt((n) => n + 1);
   }, []);
@@ -184,7 +226,7 @@ export function LegalGate({ children }: { children: ReactNode }) {
 
   switch (state.status) {
     case 'checking':
-      return <LegalChecking />;
+      return <LegalChecking retry={state.retry} />;
     case 'failed':
       return <LegalCheckFailed error={state.error} onRetry={recheckNow} />;
     case 'required':

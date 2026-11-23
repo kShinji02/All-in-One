@@ -15,8 +15,13 @@ export const ACCEPTANCE_CACHE_MAX_ENTRIES = 10_000;
  */
 export function createLegalGate({ store, documents, now = Date.now, ttlMs = ACCEPTANCE_CACHE_TTL_MS, maxEntries = ACCEPTANCE_CACHE_MAX_ENTRIES }) {
   const cache = new Map(); // "userId|terms|privacy" -> { acceptedAt, expiresAt }
-  const current = () => ({ terms: documents.terms.version, privacy: documents.privacy.version });
-  const keyOf = (userId, v) => `${userId}|${v.terms}|${v.privacy}`;
+  const current = () => ({
+    terms: documents.terms.version,
+    privacy: documents.privacy.version,
+    termsSha256: documents.terms.sha256 ?? null,
+    privacySha256: documents.privacy.sha256 ?? null,
+  });
+  const keyOf = (userId, v) => `${userId}|${v.terms}|${v.privacy}|${v.termsSha256}|${v.privacySha256}`;
 
   /** { acceptedAt } das versões ATUAIS, ou null. Lança AcceptanceStoreUnavailableError. */
   async function findCurrent(userId) {

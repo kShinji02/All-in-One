@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DiscordSessionError, requiresReload, type DiscordErrorCode } from '@/discord/errors';
+import { describeSessionError, DiscordSessionError, isTransientSessionError, requiresReload, type DiscordErrorCode } from '@/discord/errors';
 
 const ALL_CODES: DiscordErrorCode[] = [
   'ready_timeout',
@@ -9,20 +9,35 @@ const ALL_CODES: DiscordErrorCode[] = [
   'token_exchange_failed',
   'backend_unreachable',
   'backend_timeout',
+  'backend_unavailable',
   'authenticate_failed',
 ];
 
 describe('mensagens de erro (C2/C3)', () => {
-  it('backend indisponível orienta a iniciar o servidor', () => {
-    const { message } = new DiscordSessionError('backend_unreachable');
-    expect(message).toContain('npm run dev');
-    expect(message).toContain('server/');
+  it('em PRODUÇÃO nenhuma mensagem traz comandos, arquivos, variáveis ou termos internos', () => {
+    for (const code of ALL_CODES) {
+      const message = describeSessionError(code, { isDev: false });
+      expect(message, code).not.toMatch(/npm|server\/|\.env|VITE_|DISCORD_|backend|Express|handshake|OAuth|SDK|Vite/i);
+    }
   });
 
-  it('servidor sem credenciais orienta a preencher o .env e reiniciar', () => {
-    const { message } = new DiscordSessionError('server_misconfigured');
-    expect(message).toContain('.env');
-    expect(message).toMatch(/reinicie o backend/i);
+  it('em DESENVOLVIMENTO, a orientação técnica é acrescentada (backend local, .env)', () => {
+    expect(describeSessionError('backend_unreachable', { isDev: true })).toContain('npm run dev');
+    expect(describeSessionError('backend_unreachable', { isDev: true })).toContain('server/');
+    expect(describeSessionError('server_misconfigured', { isDev: true })).toContain('.env');
+    expect(describeSessionError('server_misconfigured', { isDev: true })).toMatch(/reinicie o backend/i);
+    expect(describeSessionError('backend_unreachable', { isDev: false })).not.toContain('npm run dev');
+  });
+
+  it('servidor acordando (502/503/504 ou prazo) explica que é passageiro, sem pedir ação técnica', () => {
+    expect(describeSessionError('backend_unavailable', { isDev: false })).toMatch(/iniciando ou temporariamente indisponível/i);
+    expect(describeSessionError('backend_timeout', { isDev: false })).toMatch(/pode estar sendo iniciado/i);
+  });
+
+  it('só falhas passageiras do servidor são repetidas automaticamente', () => {
+    const transient = ALL_CODES.filter((code) => isTransientSessionError(code));
+    expect(transient.sort()).toEqual(['backend_timeout', 'backend_unavailable', 'backend_unreachable']);
+    expect(isTransientSessionError('unexpected')).toBe(false);
   });
 
   it('timeout do handshake não afirma que o Discord recusou a conexão', () => {

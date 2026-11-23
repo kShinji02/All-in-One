@@ -55,7 +55,7 @@ ChatMessage = { id: string; author: ChatAuthor; text: string; createdAt: string 
 
 - No `history`, o `nonce` aparece **somente** nas mensagens do próprio usuário (para
   reconciliar envios pendentes após reconectar).
-- Códigos de `error`: `empty_message`, `message_too_long`, `invalid_message`, `invalid_nonce`
+- Códigos de `error`: `empty_message`, `message_too_long`, `invalid_message`, `invalid_nonce`, `repeated_message`
   (sem eco do nonce inválido) e `unsupported_message` (tipo desconhecido após o auth). Não
   encerram a conexão.
 - O cliente valida todo frame com `parseServerFrame` e descarta o que não confere (campos
@@ -76,6 +76,7 @@ a mensagem estiver no histórico (100 mensagens) e a sala existir.
 | Histórico por sala | 100 mensagens (buffer circular) |
 | Sala vazia | removida após 10 min, com o histórico |
 | Envio | 5 mensagens por usuário a cada 10 s (somando as conexões dele) → `rate_limited` |
+| Texto repetido | o mesmo texto (sem diferenciar maiúsculas e espaços) até 3 vezes por usuário a cada 60 s → `error` `repeated_message`, sem publicar; reenvios com o mesmo nonce não contam |
 | Frames | 30 por conexão a cada 10 s → fecha com `4029 too_many_frames` |
 | Conexões | 3 por usuário, 50 por sala |
 | Revalidação | a cada 60 s o servidor consulta os membros da instância; quem saiu é desconectado |

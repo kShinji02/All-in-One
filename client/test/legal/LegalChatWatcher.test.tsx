@@ -136,7 +136,8 @@ describe('LegalChatWatcher — proteção contra laço', () => {
     const discord: DiscordContextValue = { state: { status: 'ready', session: {} as never } as DiscordState, sdkReady: true, retry: () => {} };
     const view = (chatState: ChatConnectionState) => (
       <DiscordContext.Provider value={discord}>
-        <LegalGate>
+        {/* Sem novas tentativas automáticas, para ver o erro final na hora. */}
+        <LegalGate autoRetry={{ maxAttempts: 0, baseMs: 1, maxMs: 1 }}>
           <Harness chatState={chatState} />
         </LegalGate>
       </DiscordContext.Provider>

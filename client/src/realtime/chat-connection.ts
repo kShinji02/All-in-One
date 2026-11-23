@@ -11,6 +11,7 @@
  */
 import { classifyClose, type CloseCategory } from '@/realtime/chat-close-codes';
 import { encodeAuth, encodeSend, parseServerFrame, type ChatAuthor, type ParseFailure, type ServerFrame } from '@/realtime/chat-protocol';
+import { backoffDelay } from '@/lib/backoff';
 
 /* ------------------------------------------------------------------ *
  * Política de reconexão
@@ -66,10 +67,7 @@ const WS_OPEN = 1;
  * caíram juntos (ex.: reinício do servidor).
  */
 export function reconnectDelay(attempt: number, random: () => number = Math.random): number {
-  const exponent = Math.max(0, attempt - 1);
-  const cap = Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * 2 ** exponent);
-  const jitter = Math.min(Math.max(random(), 0), 1);
-  return Math.round(cap / 2 + (cap / 2) * jitter);
+  return backoffDelay(attempt, { baseMs: RECONNECT_BASE_DELAY_MS, maxMs: RECONNECT_MAX_DELAY_MS }, random);
 }
 
 /* ------------------------------------------------------------------ *

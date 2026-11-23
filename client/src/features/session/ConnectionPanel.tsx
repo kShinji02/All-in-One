@@ -43,7 +43,7 @@ export function ConnectionPanel() {
 
       {state.status === 'ready' && <SessionDetails session={state.session} />}
 
-      {state.status === 'connecting' && <ConnectionProgress current={state.step} />}
+      {state.status === 'connecting' && <ConnectionProgress current={state.step} retry={state.retry} />}
 
       {state.status === 'unavailable' && (
         <Notice icon={<MonitorOff className="size-5" />} title="Fora do Discord">
@@ -62,13 +62,14 @@ export function ConnectionPanel() {
       {state.status === 'error' && (
         <div className="space-y-4">
           <Notice icon={<CircleAlert className="size-5 text-signal-warn" />} title={state.message}>
-            {state.detail ? (
-              <code className="block font-mono text-xs break-all text-graphite-400">
-                {state.code} · {state.detail}
+            {/* Código curto para suporte (sem dados pessoais nem tokens). */}
+            <p className="text-xs text-graphite-400">
+              Código para suporte:{' '}
+              <code className="font-mono break-all">
+                {state.code}
+                {state.detail ? ` · ${state.detail}` : ''}
               </code>
-            ) : (
-              <code className="font-mono text-xs text-graphite-400">{state.code}</code>
-            )}
+            </p>
           </Notice>
           {/* O SDK só envia o handshake no construtor: sem handshake concluído, repetir o fluxo
               na mesma instância não adianta, então o botão recarrega a Activity. */}

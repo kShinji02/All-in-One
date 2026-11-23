@@ -348,3 +348,40 @@ describe('ChatPanel — acessibilidade e estrutura', () => {
     expect(log().className).toContain('overflow-x-hidden');
   });
 });
+
+/*
+ * Fase 3 — moderação local: ocultar as mensagens de alguém só na própria tela.
+ * Não envia nada ao servidor e não muda o que os outros participantes veem.
+ */
+describe('ChatPanel — ocultar mensagens de um participante (só para você)', () => {
+  it('oculta todas as mensagens do autor, mostra o aviso e permite mostrar de novo', async () => {
+    const user = userEvent.setup();
+    const chat = renderChat();
+    await chat.openRoom([message('spam 1', BRUNO, { minute: 1 }), message('oi Bruno', ANA, { minute: 2 }), message('spam 2', BRUNO, { minute: 3 })]);
+    expect(screen.getByText('spam 1')).toBeInTheDocument();
+
+    const [hide] = screen.getAllByRole('button', { name: 'Ocultar mensagens de Bruno (só para você)' });
+    await user.click(hide!);
+    expect(screen.queryByText('spam 1')).not.toBeInTheDocument();
+    expect(screen.queryByText('spam 2')).not.toBeInTheDocument();
+    expect(screen.getByText('oi Bruno')).toBeInTheDocument();
+    expect(screen.getAllByText(/1 mensagem de Bruno ocultada só para você/)).toHaveLength(2);
+
+    await user.click(screen.getAllByRole('button', { name: 'Mostrar mensagens de Bruno' })[0]!);
+    expect(screen.getByText('spam 1')).toBeInTheDocument();
+    expect(screen.getByText('spam 2')).toBeInTheDocument();
+  });
+
+  it('mensagens novas do autor ocultado também chegam ocultas; as próprias nunca têm a opção', async () => {
+    const user = userEvent.setup();
+    const chat = renderChat();
+    await chat.openRoom([message('primeira', BRUNO, { minute: 1 })]);
+    await user.click(screen.getByRole('button', { name: /ocultar mensagens de bruno/i }));
+    await chat.receive(message('nova do Bruno', BRUNO, { minute: 2 }));
+    expect(screen.queryByText('nova do Bruno')).not.toBeInTheDocument();
+    expect(screen.getByText(/2 mensagens de Bruno ocultadas só para você/)).toBeInTheDocument();
+
+    await chat.openRoom([message('minha', ANA, { minute: 3 })]);
+    expect(screen.queryByRole('button', { name: /ocultar mensagens de ana/i })).not.toBeInTheDocument();
+  });
+});

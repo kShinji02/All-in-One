@@ -34,6 +34,8 @@ export function ModuleCard({ module, index }: ModuleCardProps) {
         </span>
         {module.status === 'planned' ? (
           <StatusPill tone="neutral">Planejado</StatusPill>
+        ) : module.native ? (
+          <StatusPill tone="neutral">Pelo Discord</StatusPill>
         ) : (
           <StatusPill tone="ok">Disponível</StatusPill>
         )}

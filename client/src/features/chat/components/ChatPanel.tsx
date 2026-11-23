@@ -1,4 +1,4 @@
-import { useMemo, useRef, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowDown, CircleAlert, MessageSquare, MessagesSquare, RefreshCw, WifiOff } from 'lucide-react';
 import { GlassPanel } from '@/components/ui/GlassPanel';
 import { StatusPill } from '@/components/ui/StatusPill';
@@ -27,6 +27,18 @@ export function ChatPanel({ chat, onReload, onOpenLink, now }: ChatPanelProps) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const { atBottom, unseen, onScroll, scrollToBottom } = useAutoScroll(scrollRef, messages, status.banner?.title ?? null);
+
+  // Moderação local: autores ocultados por este usuário, só nesta tela e até sair da Activity.
+  // Não afeta o que os outros veem nem o servidor (sem permissões administrativas).
+  const [hiddenAuthors, setHiddenAuthors] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleHidden = useCallback((authorId: string) => {
+    setHiddenAuthors((previous) => {
+      const next = new Set(previous);
+      if (next.has(authorId)) next.delete(authorId);
+      else next.add(authorId);
+      return next;
+    });
+  }, []);
 
   const hasMessages = messages.length > 0;
   const runAction = (banner: ChatBanner) => (banner.action?.kind === 'reload' ? onReload() : reconnect());
@@ -66,7 +78,16 @@ export function ChatPanel({ chat, onReload, onOpenLink, now }: ChatPanelProps) {
                 <GroupWithDay
                   key={group.key}
                   dayLabel={group.dayLabel}
-                  item={<MessageGroupItem group={group} onRetry={retryMessage} onDiscard={discardMessage} onOpenLink={onOpenLink} />}
+                  item={
+                    <MessageGroupItem
+                      group={group}
+                      onRetry={retryMessage}
+                      onDiscard={discardMessage}
+                      onOpenLink={onOpenLink}
+                      hidden={group.author !== null && hiddenAuthors.has(group.author.id)}
+                      onToggleHidden={toggleHidden}
+                    />
+                  }
                 />
               ))}
             </ol>

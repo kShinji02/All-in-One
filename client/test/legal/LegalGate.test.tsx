@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DiscordContext, type DiscordContextValue } from '@/discord/DiscordProvider';
 import type { DiscordState } from '@/discord/types';
-import { LegalGate } from '@/legal/LegalGate';
+import { LegalGate, LEGAL_AUTO_RETRY, type LegalAutoRetry } from '@/legal/LegalGate';
+import { LEGAL_SLOW_HINT_MS } from '@/legal/components/LegalScreens';
 
 /*
  * Tela de aceite (LegalGate) com fetch simulado. O servidor é a única fonte da
@@ -64,11 +65,14 @@ afterEach(() => {
 
 const READY: DiscordState = { status: 'ready', session: { user: { id: '205519959982473217' } } as never };
 
-function renderGate(state: DiscordState = READY) {
+/** Sem novas tentativas automáticas: para ver a tela de erro final na hora. */
+const NO_RETRY: LegalAutoRetry = { maxAttempts: 0, baseMs: 1, maxMs: 1 };
+
+function renderGate(state: DiscordState = READY, { autoRetry, random }: { autoRetry?: LegalAutoRetry; random?: () => number } = {}) {
   const value: DiscordContextValue = { state, sdkReady: state.status === 'ready', retry: () => {} };
   return render(
     <DiscordContext.Provider value={value}>
-      <LegalGate>
+      <LegalGate autoRetry={autoRetry} random={random}>
         <p>RECURSOS DA ACTIVITY</p>
       </LegalGate>
     </DiscordContext.Provider>,
@@ -218,7 +222,7 @@ describe('LegalGate — aceite dos documentos legais', () => {
     handler = () => {
       throw new TypeError('Failed to fetch');
     };
-    renderGate();
+    renderGate(READY, { autoRetry: NO_RETRY });
     expect(await screen.findByRole('alert')).toHaveTextContent(/não foi possível falar com o servidor/i);
     expect(screen.queryByText('RECURSOS DA ACTIVITY')).not.toBeInTheDocument();
 
@@ -305,7 +309,7 @@ describe('LegalGate — prazo e cancelamento das chamadas', () => {
   it('verificação sem resposta em 20 s: mostra a demora (servidor iniciando) e "Tentar novamente" funciona', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     handler = (_url, init) => hang(init);
-    renderGate();
+    renderGate(READY, { autoRetry: NO_RETRY });
     expect(await screen.findByRole('status')).toHaveTextContent(/verificando/i);
 
     await act(async () => vi.advanceTimersByTime(19_000));
@@ -363,5 +367,150 @@ describe('LegalGate — prazo e cancelamento das chamadas', () => {
     await waitFor(() => expect(signals).toHaveLength(1));
     unmount();
     expect(signals[0]!.aborted).toBe(true);
+  });
+});
+
+/*
+ * Fase 2 — servidor acordando ou instável na verificação do aceite: novas tentativas
+ * automáticas (backoff com jitter, no máximo 3), aviso de demora e nunca liberação sem o servidor.
+ */
+describe('LegalGate — novas tentativas automáticas', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const statusCalls = () => calls.filter((c) => c.url === '/api/legal/status').length;
+
+  it('padrão: 3 tentativas, espera base de 3 s e teto de 15 s', () => {
+    expect(LEGAL_AUTO_RETRY).toEqual({ maxAttempts: 3, baseMs: 3_000, maxMs: 15_000 });
+  });
+
+  it('503 seguidos: tenta sozinho 3 vezes (1,5 s, 3 s, 6 s) e só então mostra o erro; nunca libera', async () => {
+    handler = () => json(503, { error: 'acceptance_unavailable' });
+    renderGate(READY, { random: () => 0 });
+    await waitFor(() => expect(statusCalls()).toBe(1));
+    for (const [index, wait] of [1_500, 3_000, 6_000].entries()) {
+      expect(await screen.findByText(new RegExp(`tentando de novo automaticamente \\(${index + 1} de 3\\)`, 'i'))).toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.queryByText('RECURSOS DA ACTIVITY')).not.toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTime(wait - 100));
+      expect(statusCalls(), `espera ${index + 1}`).toBe(index + 1);
+      await act(async () => vi.advanceTimersByTime(100));
+      await waitFor(() => expect(statusCalls()).toBe(index + 2));
+    }
+    expect(await screen.findByRole('alert')).toHaveTextContent(/não foi possível falar com o servidor/i);
+    await act(async () => vi.advanceTimersByTime(60_000));
+    expect(statusCalls(), 'sem laço de tentativas').toBe(4);
+    expect(screen.queryByText('RECURSOS DA ACTIVITY')).not.toBeInTheDocument();
+  });
+
+  it('servidor volta durante as tentativas: libera assim que ele confirma o aceite', async () => {
+    let n = 0;
+    handler = () => {
+      n += 1;
+      return n === 1 ? json(502, {}) : json(200, { documents: DOCS, accepted: true, acceptedAt: '2026-11-01T00:00:00.000Z' });
+    };
+    renderGate(READY, { random: () => 0 });
+    expect(await screen.findByText(/tentando de novo automaticamente \(1 de 3\)/i)).toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTime(1_500));
+    expect(await screen.findByText('RECURSOS DA ACTIVITY')).toBeInTheDocument();
+  });
+
+  it('erros que não são passageiros (sessão expirada, limite, resposta inválida) não repetem sozinhos', async () => {
+    for (const response of [() => json(401, { error: 'invalid_token' }), () => json(429, { error: 'rate_limited' }), () => json(200, { accepted: 'talvez' })]) {
+      calls.length = 0;
+      handler = response;
+      const { unmount } = renderGate(READY, { random: () => 0 });
+      expect(await screen.findByRole('alert')).toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTime(30_000));
+      expect(statusCalls()).toBe(1);
+      unmount();
+    }
+  });
+
+  it('verificação demorada: depois de 5 s explica que o servidor pode estar iniciando', async () => {
+    handler = () => new Promise<Response>(() => undefined);
+    renderGate();
+    expect(await screen.findByRole('status')).toHaveTextContent(/verificando/i);
+    expect(screen.queryByText(/demorando mais que o normal/i)).not.toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTime(LEGAL_SLOW_HINT_MS));
+    expect(screen.getByText(/demorando mais que o normal.*até um minuto/i)).toBeInTheDocument();
+  });
+
+  it('"Tentar novamente" depois das tentativas zera a contagem', async () => {
+    handler = () => json(503, {});
+    renderGate(READY, { autoRetry: { maxAttempts: 1, baseMs: 1_000, maxMs: 1_000 }, random: () => 0 });
+    expect(await screen.findByText(/\(1 de 1\)/)).toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTime(500));
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.click(screen.getByRole('button', { name: /tentar novamente/i }));
+    expect(await screen.findByText(/\(1 de 1\)/)).toBeInTheDocument();
+  });
+});
+
+describe('LegalGate — identificação SHA-256 dos documentos (Fase 2)', () => {
+  it('mostra a identificação curta de cada documento e envia os hashes ao aceitar', async () => {
+    const user = userEvent.setup();
+    const HASHED = { terms: { ...DOCS.terms, sha256: 'c'.repeat(64) }, privacy: { ...DOCS.privacy, sha256: 'd'.repeat(64) } };
+    handler = (url) =>
+      url.endsWith('/acceptance')
+        ? json(201, { accepted: true, acceptedAt: '2026-11-23T00:00:00.000Z', documents: HASHED })
+        : json(200, { documents: HASHED, accepted: false, acceptedAt: null });
+    renderGate();
+    expect(await screen.findByText(`SHA-256 ${'c'.repeat(12)}…`)).toHaveAttribute('title', `SHA-256: ${'c'.repeat(64)}`);
+    expect(screen.getByText(`SHA-256 ${'d'.repeat(12)}…`)).toBeInTheDocument();
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(acceptButton());
+    expect(await screen.findByText('RECURSOS DA ACTIVITY')).toBeInTheDocument();
+    expect(posts()[0]!.body).toEqual({ termsVersion: 't-1', privacyVersion: 'p-1', termsSha256: 'c'.repeat(64), privacySha256: 'd'.repeat(64) });
+  });
+
+  it('versão sem hash: nenhuma identificação é exibida (nada é inventado)', async () => {
+    renderGate();
+    expect(await screen.findByRole('heading', { name: 'Antes de começar' })).toBeInTheDocument();
+    expect(screen.queryByText(/SHA-256/)).not.toBeInTheDocument();
+  });
+});
+
+describe('LegalGate — revisão final', () => {
+  it('opções passadas como objeto novo a cada renderização não refazem a verificação', async () => {
+    const value: DiscordContextValue = { state: READY, sdkReady: true, retry: () => {} };
+    const view = () => (
+      <DiscordContext.Provider value={value}>
+        <LegalGate autoRetry={{ maxAttempts: 3, baseMs: 1_000, maxMs: 1_000 }} random={() => 0.5}>
+          <p>RECURSOS DA ACTIVITY</p>
+        </LegalGate>
+      </DiscordContext.Provider>
+    );
+    const { rerender } = render(view());
+    expect(await screen.findByRole('heading', { name: 'Antes de começar' })).toBeInTheDocument();
+    for (let i = 0; i < 5; i += 1) rerender(view());
+    await act(async () => undefined);
+    expect(calls.filter((c) => c.url === '/api/legal/status')).toHaveLength(1);
+  });
+});
+
+describe('LegalGate — acessibilidade da verificação', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('o aviso de nova tentativa fica na região anunciada (role="status")', async () => {
+    handler = () => json(503, {});
+    renderGate(READY, { random: () => 0 });
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/tentando de novo automaticamente \(1 de 3\)/i));
+  });
+
+  it('o aviso de demora também', async () => {
+    handler = () => new Promise<Response>(() => undefined);
+    renderGate();
+    await act(async () => vi.advanceTimersByTime(LEGAL_SLOW_HINT_MS));
+    expect(screen.getByRole('status')).toHaveTextContent(/demorando mais que o normal/i);
   });
 });

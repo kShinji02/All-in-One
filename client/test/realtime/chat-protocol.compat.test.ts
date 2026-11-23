@@ -136,6 +136,7 @@ describe('compatibilidade ao vivo com o servidor real (attachChat)', () => {
         return { user, instanceId };
       },
       messageRateLimit: { limit: 3, windowMs: 10_000 },
+      repeatedMessageLimit: { limit: 1, windowMs: 10_000 },
     });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
@@ -153,6 +154,7 @@ describe('compatibilidade ao vivo com o servidor real (attachChat)', () => {
     ana.send({ type: 'send', text: 42 }); // error invalid_message
     ana.send({ type: 'send', text: 'x', nonce: '<x>' }); // error invalid_nonce
     ana.send({ type: 'desconhecido' }); // error unsupported_message
+    ana.send({ type: 'send', text: 'SEM   nonce', nonce: 'n-rep' }); // error repeated_message (mesmo texto de "sem nonce")
     ana.send({ type: 'send', text: 'terceira', nonce: 'n-3' });
     ana.send({ type: 'send', text: 'quarta', nonce: 'n-4' }); // rate_limited (limite 3)
     await delay(80);

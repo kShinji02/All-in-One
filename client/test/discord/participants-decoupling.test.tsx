@@ -112,10 +112,10 @@ const sessionFor = (userId: string): DiscordSession => ({
 const IN_DISCORD: LaunchContext = { isDiscord: true, platform: 'desktop', instanceId: 'i-1-gc-2-3', guildId: null, channelId: null };
 const IN_BROWSER: LaunchContext = { isDiscord: false, platform: 'unknown', instanceId: null, guildId: null, channelId: null };
 
-function renderApp(launch: LaunchContext = IN_DISCORD) {
+function renderApp(launch: LaunchContext = IN_DISCORD, random?: () => number) {
   return render(
     <StrictMode>
-      <DiscordProvider launch={launch}>
+      <DiscordProvider launch={launch} random={random}>
         <ConnectionPanel />
         <ParticipantsView />
       </DiscordProvider>
@@ -173,10 +173,10 @@ describe('C1 — participantes desacoplados do OAuth', () => {
     expect(fake.participants.fetches).toBe(0);
   });
 
-  it('SDK pronto + Express desligado: a lista carrega mesmo com a sessão em erro', async () => {
+  it('SDK pronto + sessão em erro (troca do código recusada): a lista carrega mesmo assim', async () => {
     renderApp();
     await sdkBecomesReady();
-    await sessionFails(new DiscordSessionError('backend_unreachable', 'HTTP 500'));
+    await sessionFails(new DiscordSessionError('token_exchange_failed', 'HTTP 400 · invalid_grant'));
 
     const panel = participantsPanel();
     expect(await panel.findByText('Ana')).toBeInTheDocument();
@@ -185,8 +185,7 @@ describe('C1 — participantes desacoplados do OAuth', () => {
     expect(panel.queryByText('Você')).toBeNull();
     expect(panel.getByText(/autenticação incompleta/i)).toBeInTheDocument();
     expect(panel.queryByText(/aguardando a sessão/i)).toBeNull();
-    // C2: a Sessão orienta a iniciar o servidor.
-    expect(sessionPanel().getByText(/npm run dev/)).toBeInTheDocument();
+    expect(sessionPanel().getByRole('button', { name: /tentar novamente/i })).toBeInTheDocument();
   });
 
   it('SDK pronto + OAuth falhando (autorização recusada): a lista também carrega', async () => {
@@ -316,7 +315,7 @@ describe('C3 — handshake e nova tentativa', () => {
     renderApp();
     await sessionFails(new DiscordSessionError('ready_timeout'));
     const panel = sessionPanel();
-    expect(panel.getByText(/não respondeu ao handshake/i)).toBeInTheDocument();
+    expect(panel.getByText(/não respondeu a tempo/i)).toBeInTheDocument();
     expect(panel.queryByText(/recus/i)).toBeNull();
     expect(panel.queryByRole('button', { name: /tentar novamente/i })).toBeNull();
 
@@ -335,7 +334,7 @@ describe('C3 — handshake e nova tentativa', () => {
   it('erro depois do handshake: "Tentar novamente" refaz o fluxo sem recarregar a página', async () => {
     renderApp();
     await sdkBecomesReady();
-    await sessionFails(new DiscordSessionError('backend_unreachable', 'HTTP 500'));
+    await sessionFails(new DiscordSessionError('token_exchange_failed', 'HTTP 400 · invalid_grant'));
     const callsBefore = fake.session.calls;
 
     await userEvent.click(sessionPanel().getByRole('button', { name: /tentar novamente/i }));
@@ -346,5 +345,101 @@ describe('C3 — handshake e nova tentativa', () => {
     // A nova tentativa conclui e a lista segue funcionando, agora com o selo "Você".
     await sessionSucceeds();
     expect(await participantsPanel().findByText('Você')).toBeInTheDocument();
+  });
+});
+
+/*
+ * Fase 2 — falhas passageiras do servidor (Render acordando, 502/503/504 do proxy, prazo,
+ * rede instável): a sessão tenta de novo sozinha, com backoff e jitter, até 3 vezes.
+ */
+describe('Fase 2 — servidor iniciando: novas tentativas automáticas', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  async function failTransient(code: 'backend_unavailable' | 'backend_timeout' | 'backend_unreachable' = 'backend_unavailable') {
+    await sessionFails(new DiscordSessionError(code, 'HTTP 502'));
+  }
+
+  it('502 do proxy: mostra "tentando de novo (1 de 3)", espera o backoff e refaz a sessão sozinha', async () => {
+    renderApp(IN_DISCORD, () => 0); // jitter mínimo: 1ª espera = 1,5 s
+    await sdkBecomesReady();
+    const callsBefore = fake.session.calls;
+    await failTransient();
+
+    const panel = sessionPanel();
+    expect(panel.getByRole('status')).toHaveTextContent(/servidor está iniciando ou instável.*\(1 de 3\)/i);
+    expect(panel.queryByRole('button', { name: /tentar novamente/i })).toBeNull();
+    expect(panel.queryByText('backend_unavailable')).toBeNull();
+
+    await act(async () => vi.advanceTimersByTime(1_400));
+    expect(fake.session.calls).toBe(callsBefore);
+    await act(async () => vi.advanceTimersByTime(200));
+    expect(fake.session.calls).toBeGreaterThan(callsBefore);
+
+    await sessionSucceeds();
+    expect(await panel.findByText('Conectado')).toBeInTheDocument();
+    expect(panel.queryByRole('status')).toBeNull();
+  });
+
+  it('backoff cresce (1,5 s, 3 s, 6 s com jitter mínimo) e para depois de 3 tentativas, mostrando o erro', async () => {
+    renderApp(IN_DISCORD, () => 0);
+    await sdkBecomesReady();
+    const waits = [1_500, 3_000, 6_000];
+    for (const [index, wait] of waits.entries()) {
+      await failTransient('backend_timeout');
+      expect(sessionPanel().getByRole('status')).toHaveTextContent(`(${index + 1} de 3)`);
+      const calls = fake.session.calls;
+      await act(async () => vi.advanceTimersByTime(wait - 100));
+      expect(fake.session.calls, `espera ${index + 1}`).toBe(calls);
+      await act(async () => vi.advanceTimersByTime(100));
+      expect(fake.session.calls).toBeGreaterThan(calls);
+    }
+    await failTransient('backend_timeout');
+    const panel = sessionPanel();
+    expect(panel.getByText('Erro')).toBeInTheDocument();
+    expect(panel.getByText(/demorou para responder/i)).toBeInTheDocument();
+    const calls = fake.session.calls;
+    await act(async () => vi.advanceTimersByTime(60_000));
+    expect(fake.session.calls, 'sem novas tentativas sozinho (sem laço)').toBe(calls);
+
+    // "Tentar novamente" zera a contagem: uma nova falha volta a tentar sozinha.
+    await userEvent.click(panel.getByRole('button', { name: /tentar novamente/i }));
+    await failTransient();
+    expect(sessionPanel().getByRole('status')).toHaveTextContent('(1 de 3)');
+  });
+
+  it('jitter: com o máximo aleatório, a primeira espera é de 3 s', async () => {
+    renderApp(IN_DISCORD, () => 1);
+    await sdkBecomesReady();
+    await failTransient('backend_unreachable');
+    const calls = fake.session.calls;
+    await act(async () => vi.advanceTimersByTime(2_900));
+    expect(fake.session.calls).toBe(calls);
+    await act(async () => vi.advanceTimersByTime(100));
+    expect(fake.session.calls).toBeGreaterThan(calls);
+  });
+
+  it('sair da Activity durante a espera cancela a nova tentativa', async () => {
+    const { unmount } = renderApp(IN_DISCORD, () => 0);
+    await sdkBecomesReady();
+    await failTransient();
+    const calls = fake.session.calls;
+    expect(vi.getTimerCount(), 'há uma espera agendada').toBeGreaterThan(0);
+    unmount();
+    // Nada fica agendado depois de sair (a espera da nova tentativa é cancelada, não só ignorada).
+    expect(vi.getTimerCount()).toBe(0);
+    await act(async () => vi.advanceTimersByTime(30_000));
+    expect(fake.session.calls).toBe(calls);
+  });
+
+  it('erros que não são passageiros (autorização recusada) não tentam de novo sozinhos', async () => {
+    renderApp(IN_DISCORD, () => 0);
+    await sdkBecomesReady();
+    await sessionFails(new DiscordSessionError('authorize_failed', 'user cancelled'));
+    const calls = fake.session.calls;
+    await act(async () => vi.advanceTimersByTime(30_000));
+    expect(fake.session.calls).toBe(calls);
+    expect(sessionPanel().getByRole('button', { name: /tentar novamente/i })).toBeInTheDocument();
   });
 });

@@ -3,7 +3,7 @@ import { CloseCode, MAX_ACCESS_TOKEN_LENGTH } from "../chat/config.js";
 import { ChatCloseError } from "../chat/errors.js";
 import { createSlidingWindowLimiter } from "../chat/rate-limit.js";
 import { AcceptanceStoreUnavailableError } from "./acceptance-store.js";
-import { LEGAL_VERSION_PATTERN } from "./config.js";
+import { LEGAL_VERSION_PATTERN, SHA256_PATTERN } from "./config.js";
 
 /**
  * Limites em duas camadas:
@@ -38,6 +38,8 @@ export function createLegalRouter({
   gate,
   documents,
   appVersion = null,
+  /** Conferência do conteúdo publicado (legal/integrity.js): bloqueia aceites se divergir. */
+  integrity = { blocked: () => false },
   now = Date.now,
   logger = console,
   statusUserRateLimit = LEGAL_STATUS_USER_RATE_LIMIT,
@@ -57,10 +59,14 @@ export function createLegalRouter({
   }, 60_000);
   sweeper.unref?.();
 
+  // `sha256`: identificação exata do conteúdo publicado (null enquanto a versão não tiver hash).
   const publicDocuments = () => ({
-    terms: { version: documents.terms.version, url: documents.terms.url },
-    privacy: { version: documents.privacy.version, url: documents.privacy.url },
+    terms: { version: documents.terms.version, url: documents.terms.url, sha256: documents.terms.sha256 ?? null },
+    privacy: { version: documents.privacy.version, url: documents.privacy.url, sha256: documents.privacy.sha256 ?? null },
   });
+
+  /** Hash opcional enviado pelo cliente: undefined (não enviado), null ou SHA-256; outro valor é inválido. */
+  const optionalHash = (value) => value === undefined || value === null || (typeof value === "string" && SHA256_PATTERN.test(value));
 
   router.use((req, res, next) => {
     res.set("Cache-Control", "no-store");
@@ -136,18 +142,29 @@ export function createLegalRouter({
 
     const termsVersion = req.body?.termsVersion;
     const privacyVersion = req.body?.privacyVersion;
+    const termsSha256 = req.body?.termsSha256;
+    const privacySha256 = req.body?.privacySha256;
     if (
       typeof termsVersion !== "string" ||
       typeof privacyVersion !== "string" ||
       !LEGAL_VERSION_PATTERN.test(termsVersion) ||
-      !LEGAL_VERSION_PATTERN.test(privacyVersion)
+      !LEGAL_VERSION_PATTERN.test(privacyVersion) ||
+      !optionalHash(termsSha256) ||
+      !optionalHash(privacySha256)
     ) {
       return res.status(400).send({ error: "invalid_request" });
     }
     const current = gate.current();
-    if (termsVersion !== current.terms || privacyVersion !== current.privacy) {
+    // Os hashes, quando enviados, precisam ser exatamente os dos documentos atuais (os que a tela exibiu).
+    const hashMismatch =
+      (termsSha256 !== undefined && termsSha256 !== current.termsSha256) ||
+      (privacySha256 !== undefined && privacySha256 !== current.privacySha256);
+    if (termsVersion !== current.terms || privacyVersion !== current.privacy || hashMismatch) {
       return res.status(409).send({ error: "version_mismatch", documents: publicDocuments() });
     }
+
+    // Documento publicado diferente do hash registrado: não registra um aceite de conteúdo que o usuário não viu.
+    if (integrity.blocked()) return res.status(503).send({ error: "documents_unverified" });
 
     try {
       const result = await gate.accept(user.id, appVersion);

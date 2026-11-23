@@ -134,6 +134,7 @@ const REJECTED: Record<string, string> = {
   message_too_long: 'passou de 500 caracteres',
   invalid_message: 'formato inválido',
   invalid_nonce: 'identificador inválido',
+  repeated_message: 'mesma mensagem enviada muitas vezes seguidas',
 };
 
 const FAILURE: Record<FailureReason, string> = {

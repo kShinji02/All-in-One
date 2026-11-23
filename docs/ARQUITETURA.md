@@ -119,7 +119,8 @@ Recuperação:
 
 ## Home e registro de módulos
 
-`client/src/features/registry.ts` é a **fonte única** da Home:
+`client/src/features/registry.ts` é a **fonte única** da Home (chat, participantes e o guia
+**Compartilhar tela**, que é `native`: o recurso é do próprio Discord e o roteiro mostra "Pelo Discord"):
 
 - módulo `available` declara a `View` e a área (`slot`): `main` (chat) ou `aside` (coluna lateral);
 - módulo `planned` não tem view e aparece só no roteiro ("Módulos").
@@ -134,7 +135,8 @@ com `status: 'available'` e o `slot`; nenhuma alteração na Home é necessária
 | Camada | Estratégia |
 |---|---|
 | Painéis da Home | Cada painel (Ambiente, Chat, Participantes, Sessão) fica num `FeatureBoundary`: um erro de renderização mostra um aviso com **Tentar novamente** só naquele painel; os demais e a conexão do chat continuam |
-| Sessão Discord | Códigos estáveis (`ready_timeout`, `backend_unreachable`, …) com mensagem acionável; ver o guia de teste |
+| Sessão Discord | Códigos estáveis (`ready_timeout`, `backend_unavailable`, …) com mensagens para o usuário final; orientações técnicas (comandos, `.env`) só em desenvolvimento. Falhas passageiras do servidor (`backend_timeout`, `backend_unavailable` para 502/503/504 do proxy, `backend_unreachable`) repetem sozinhas até 3 vezes, com backoff e jitter (1,5–3 s, 3–6 s, 6–12 s), mostrando "Tentando de novo automaticamente (n de 3)"; sair da Activity cancela a espera. Comandos do SDK (`authenticate`, `getChannel`) têm prazo de 10 s |
+| Aceite legal | Verificação com prazo de 20 s; `timeout` e `unavailable` repetem sozinhos até 3 vezes (mesma política); depois de 5 s verificando, a tela explica que o servidor pode estar iniciando. Nunca libera sem a confirmação do servidor |
 | Chat | Estado da conexão sempre visível (indicador e aviso); mensagens com estado `pending`/`sent`/`failed` e o motivo da falha |
 | Frames inválidos | Descartados por `parseServerFrame`, nunca chegam à interface |
 | Logs | Nunca contêm token, segredo, texto de mensagem nem URL de link (só códigos e tipos de erro) |
@@ -150,6 +152,25 @@ apenas para domínios que o usuário marcou como confiáveis). O link não tem `
 nenhum gesto (clique, clique do meio, Ctrl/Cmd+clique, menu de contexto) navega nativamente.
 Só `http`/`https` viram link; o texto nunca é interpretado como HTML. Fora do Discord, é um
 link comum (`target="_blank"`, `rel="noopener noreferrer nofollow"`).
+
+## Recursos do Discord usados pela Activity
+
+| Recurso | Como | Observação |
+|---|---|---|
+| Convite | `commands.openInviteDialog` (botão **Convidar para a Activity** em Participantes) | A tela de convite é do Discord; a Activity não recebe contatos. Se o comando falhar, a interface orienta a usar o convite do próprio Discord |
+| Compartilhamento de tela | Nenhum comando: o Embedded App SDK não oferece captura nem transmissão de tela | O painel **Compartilhar tela** só explica onde fica o botão nativo da chamada de voz, conforme `platform` (computador/celular). A Activity nunca acessa tela, câmera ou microfone |
+| Links externos | `commands.openExternalLink` | Ver abaixo |
+
+## Moderação no chat
+
+- **Servidor:** limites de envio, de frames e de texto repetido (`repeated_message`); ver
+  [CHAT-PROTOCOL.md](CHAT-PROTOCOL.md#salas-e-limites).
+- **Ocultar mensagens (local):** em cada grupo de mensagens de outra pessoa, **Ocultar** esconde as
+  mensagens dela **só na própria tela** até sair da Activity (não avisa ninguém nem muda o servidor).
+- **Não implementado (decisão de produto):** apagar mensagens para todos, silenciar/banir e denúncia.
+  Exigem definir quem modera (ex.: permissão de "Gerenciar mensagens" no servidor do Discord, que a
+  Activity hoje não consulta), onde ficam as denúncias e por quanto tempo (dados pessoais), e o
+  procedimento de atendimento. Até lá, o caminho é a denúncia/moderação do próprio Discord.
 
 ## Limitações conhecidas
 

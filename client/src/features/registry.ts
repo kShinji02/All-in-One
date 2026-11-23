@@ -1,7 +1,8 @@
 import type { ComponentType } from 'react';
-import { MessageSquare, Radio, Clapperboard, Users, type LucideIcon } from 'lucide-react';
+import { MessageSquare, MonitorUp, Radio, Clapperboard, Users, type LucideIcon } from 'lucide-react';
 import { ChatView } from '@/features/chat/ChatView';
 import { ParticipantsView } from '@/features/participants/ParticipantsView';
+import { ScreenShareView } from '@/features/screenshare/ScreenShareView';
 
 /**
  * Registro central dos módulos do All-in-One — fonte única da Home.
@@ -11,7 +12,7 @@ import { ParticipantsView } from '@/features/participants/ParticipantsView';
  * "planned" não tem view e aparece só no roteiro. A Home não importa views de módulo
  * diretamente: tudo o que ela monta vem daqui.
  */
-export type FeatureId = 'chat' | 'participants' | 'communication' | 'media';
+export type FeatureId = 'chat' | 'participants' | 'screenshare' | 'communication' | 'media';
 export type FeatureStatus = 'planned' | 'available';
 
 /** Áreas da Home: `main` ocupa a maior parte (chat); `aside` é a coluna lateral. */
@@ -23,6 +24,8 @@ interface FeatureBase {
   description: string;
   icon: LucideIcon;
   accent: 'neon' | 'electric';
+  /** O recurso é do próprio Discord; o módulo só orienta (o roteiro mostra "Pelo Discord"). */
+  native?: boolean;
 }
 
 export interface PlannedFeature extends FeatureBase {
@@ -57,6 +60,18 @@ export const featureModules: readonly FeatureModule[] = [
     accent: 'electric',
     slot: 'aside',
     View: ParticipantsView,
+  },
+  {
+    id: 'screenshare',
+    name: 'Compartilhar tela',
+    // Recurso nativo do Discord: a Activity só orienta, não captura a tela (o SDK não oferece isso).
+    description: 'Feito pelo próprio Discord, na chamada de voz; o painel mostra onde fica o botão.',
+    icon: MonitorUp,
+    status: 'available',
+    native: true,
+    accent: 'neon',
+    slot: 'aside',
+    View: ScreenShareView,
   },
   {
     id: 'communication',

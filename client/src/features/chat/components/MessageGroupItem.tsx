@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { CircleAlert, Loader2, RotateCcw, X } from 'lucide-react';
+import { CircleAlert, Eye, EyeOff, Loader2, RotateCcw, X } from 'lucide-react';
 import { describeFailure } from '@/features/chat/lib/chat-status';
 import type { MessageGroup } from '@/features/chat/lib/group-messages';
 import { MessageText } from '@/features/chat/components/MessageText';
@@ -15,12 +15,39 @@ interface MessageGroupItemProps {
   onRetry: (key: string) => void;
   onDiscard: (key: string) => void;
   onOpenLink?: (href: string) => void;
+  /** As mensagens deste autor estão ocultas para o usuário (moderação local, só nesta tela). */
+  hidden?: boolean;
+  /** Oculta/mostra as mensagens do autor. Ausente = sem a opção (ex.: mensagens próprias). */
+  onToggleHidden?: (authorId: string) => void;
 }
 
+const hideButtonClass =
+  'inline-flex shrink-0 items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11px] font-medium text-graphite-400 transition hover:bg-white/[0.06] hover:text-white focus-visible:opacity-100';
+
 /** Cabeçalho (avatar, nome, horário) e as mensagens seguidas de um mesmo autor. */
-export const MessageGroupItem = memo(function MessageGroupItem({ group, onRetry, onDiscard, onOpenLink }: MessageGroupItemProps) {
+export const MessageGroupItem = memo(function MessageGroupItem({ group, onRetry, onDiscard, onOpenLink, hidden = false, onToggleHidden }: MessageGroupItemProps) {
   const name = group.author?.displayName ?? (group.own ? 'Você' : 'Usuário');
   const [first] = group.messages;
+  const authorId = group.author?.id ?? null;
+  const canHide = !group.own && authorId !== null && onToggleHidden !== undefined;
+
+  if (hidden && canHide) {
+    const count = group.messages.length;
+    return (
+      <li className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-center gap-x-3 rounded-xl px-2 py-1.5 sm:px-3" data-hidden-author={authorId}>
+        <Avatar src={group.author?.avatarUrl ?? null} label={name} className="size-9 text-sm opacity-40 grayscale" />
+        <p className="flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-graphite-400">
+          <span className="truncate">
+            {count === 1 ? '1 mensagem' : `${count} mensagens`} de {name} ocultada{count === 1 ? '' : 's'} só para você.
+          </span>
+          <button type="button" onClick={() => onToggleHidden(authorId)} className={hideButtonClass} aria-label={`Mostrar mensagens de ${name}`}>
+            <Eye className="size-3" aria-hidden="true" />
+            Mostrar
+          </button>
+        </p>
+      </li>
+    );
+  }
 
   return (
     <li
@@ -41,6 +68,19 @@ export const MessageGroupItem = memo(function MessageGroupItem({ group, onRetry,
             </span>
           )}
           {first && first.status !== 'pending' && <Timestamp entry={first} className="shrink-0" />}
+          {canHide && (
+            <button
+              type="button"
+              onClick={() => onToggleHidden(authorId)}
+              // Discreto no computador (aparece ao passar o mouse ou focar); sempre visível no celular.
+              className={cn(hideButtonClass, 'ml-auto sm:opacity-0 sm:group-hover/message:opacity-100 sm:group-focus-within/message:opacity-100')}
+              aria-label={`Ocultar mensagens de ${name} (só para você)`}
+              title="Oculta as mensagens desta pessoa só na sua tela, até você sair da Activity"
+            >
+              <EyeOff className="size-3" aria-hidden="true" />
+              <span className="hidden sm:inline">Ocultar</span>
+            </button>
+          )}
         </p>
 
         <ul className="mt-0.5 space-y-0.5">

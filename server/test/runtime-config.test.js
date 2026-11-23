@@ -114,6 +114,7 @@ describe("PROXY_DIAGNOSTICS", () => {
       }
       assert.equal(logs.length, PROXY_DIAGNOSTICS_MAX_LOGS);
       assert.ok(logs.every((line) => line.includes("2 entrada(s)")));
+      assert.ok(logs.every((line) => line.includes("(da direita para a esquerda: public, public)") && line.includes("socket: loopback")));
       assert.ok(logs.every((line) => !line.includes("203.0.113.7") && !line.includes("198.51.100.9")), "nenhum IP no log");
     }
   });

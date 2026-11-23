@@ -93,12 +93,14 @@ describe('Home a partir do registro', () => {
     expect(cards.map((c) => within(c).getByRole('heading', { level: 3 }).textContent)).toEqual([
       'Chat',
       'Participantes',
+      'Compartilhar tela',
       'Comunicação',
       'Player de mídia',
     ]);
-    expect(cards.map((c) => within(c).getByText(/Disponível|Planejado/).textContent)).toEqual([
+    expect(cards.map((c) => within(c).getByText(/Disponível|Planejado|Pelo Discord/).textContent)).toEqual([
       'Disponível',
       'Disponível',
+      'Pelo Discord',
       'Planejado',
       'Planejado',
     ]);

@@ -76,9 +76,17 @@ implantação:
 
 1. Defina `PROXY_DIAGNOSTICS=true` e reimplante.
 2. Abra `https://<serviço>.onrender.com/api/health` no navegador (sem extensões que alterem cabeçalhos).
-3. Nos logs do Render, a linha `[proxy] /api/health: X-Forwarded-For com N entrada(s).` mostra
-   quantos proxies acrescentaram endereços (o log nunca contém os IPs).
-4. Use `TRUST_PROXY=N` e remova `PROXY_DIAGNOSTICS`.
+3. Nos logs do Render, a linha `[proxy] /api/health: X-Forwarded-For com N entrada(s) (da direita
+   para a esquerda: …); socket: …; req.ip: …; outros cabeçalhos de IP: …` mostra quantos proxies
+   acrescentaram endereços, o **tipo** de cada um (`loopback`, `private`, `cgnat` ou `public`) e quais
+   cabeçalhos de IP existem (ex.: `cf-connecting-ip`). O log nunca contém os IPs. São no máximo 20
+   linhas por inicialização.
+4. Escolha o menor `N` com o qual `req.ip` fica `public` numa requisição feita direto do navegador
+   (ex.: entradas `private, public` → `TRUST_PROXY=1` já pega o `public`). Use `TRUST_PROXY=N` e
+   remova `PROXY_DIAGNOSTICS`.
+
+Pelo proxy do Discord (dentro da Activity), o `public` é o endereço do proxy do Discord, e não o do
+usuário: é esperado, e os limites foram dimensionados para isso.
 
 Se em dúvida, mantenha `1`: um valor baixo demais faz usuários compartilharem limites
 (menos disponibilidade), enquanto um valor alto demais deixaria o cliente escolher o próprio IP
@@ -103,10 +111,17 @@ O prefixo `/` aponta para o frontend: o Quick Tunnel local ou a Cloudflare
 
 ## Verificação após a implantação
 
+A primeira inicialização depois desta versão aplica a migration `002_legal_document_hashes`
+(colunas de hash nos aceites; não altera registros). O log mostra `[db] migrations aplicadas: 2.`
+Antes de voltar o backend para uma versão anterior a ela, leia
+[ACEITE-LEGAL.md](ACEITE-LEGAL.md#migration-002-hashes).
+
 1. `GET https://<serviço>.onrender.com/api/health` → `{"ok":true,"oauthConfigured":true,"chatConfigured":true,"legalStore":"postgres"}`.
    Sem `legalStore`, o Render ainda roda uma versão anterior ao aceite legal.
 2. Os logs mostram `perfil "production"`, `Aceites legais: PostgreSQL em <host> (TLS)` (host sem
-   `-pooler`), `Server listening on 0.0.0.0:<porta>`, `[db] migrations aplicadas: 1.` (na primeira
-   implantação; depois, `[db] schema atualizado`) e nenhum aviso `[config]`.
+   `-pooler`), `Server listening on 0.0.0.0:<porta>`, `[db] migrations aplicadas: …` (na primeira
+   implantação de cada migration; depois, `[db] schema atualizado`) e nenhum aviso `[config]` além de
+   `Documento "…" (versão …) sem hash SHA-256 registrado`, esperado enquanto os documentos finais não
+   forem publicados ([ACEITE-LEGAL.md](ACEITE-LEGAL.md#identificação-exata-do-conteúdo-sha-256)).
 3. `GET https://<serviço>.onrender.com/api/legal/status` sem token → `401 {"error":"auth_required"}`.
 4. Dentro do Discord, a Activity autentica, mostra a tela de aceite (ou entra direto) e o chat conecta.

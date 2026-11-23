@@ -111,6 +111,7 @@ sessão, os participantes e o chat ficam indisponíveis: eles dependem do Embedd
 | `server/` | `npm start` | Inicia o backend (`node server.js`) na `PORT` do ambiente ou na 3001 |
 | `server/` | `npm run dev` | O mesmo que `npm start` |
 | `server/` | `npm test` | Testes do backend (`node --test`) |
+| `server/` | `npm run legal:hash` | SHA-256 dos documentos legais (arquivos ou `--url` publicada), somente leitura ([docs/ACEITE-LEGAL.md](docs/ACEITE-LEGAL.md#identificação-exata-do-conteúdo-sha-256)) |
 | `client/` | `npm run dev` | Vite com HMR na porta 5173 |
 | `client/` | `npm run dev:discord` | Build de produção em watch + `vite preview` na porta 5173 |
 | `client/` | `npm test` | Verifica os tipos dos testes e roda o Vitest |

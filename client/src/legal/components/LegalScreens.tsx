@@ -1,5 +1,5 @@
 import { CircleAlert, ExternalLink, FileText, LoaderCircle, LogOut, RotateCcw, ShieldCheck } from 'lucide-react';
-import { useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { GlassPanel } from '@/components/ui/GlassPanel';
 import { useDiscord } from '@/discord/useDiscord';
 import { openExternalLink } from '@/discord/external-link';
@@ -38,17 +38,47 @@ function Brand() {
   return <p className="font-mono text-xs tracking-[0.2em] text-electric-400 uppercase">All-in-One · Discord Activity</p>;
 }
 
+/** Depois deste tempo verificando, explica que o servidor pode estar iniciando. */
+export const LEGAL_SLOW_HINT_MS = 5_000;
+
+interface LegalCheckingProps {
+  children?: ReactNode;
+  /** Nova tentativa automática em andamento (servidor iniciando ou instável). */
+  retry?: { attempt: number; maxAttempts: number };
+}
+
 /** Enquanto a sessão do Discord conecta ou o servidor confere o aceite. */
-export function LegalChecking({ children }: { children?: ReactNode }) {
+export function LegalChecking({ children, retry }: LegalCheckingProps) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (children) return;
+    const timer = setTimeout(() => setSlow(true), LEGAL_SLOW_HINT_MS);
+    return () => clearTimeout(timer);
+  }, [children]);
+
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-6">
       {children ?? (
         <LegalFrame>
           <Brand />
-          <p role="status" className="mt-4 flex items-center gap-3 text-sm text-graphite-300">
-            <LoaderCircle className="size-5 animate-spin text-neon-400" aria-hidden="true" />
-            Verificando os Termos de Uso e a Política de Privacidade…
-          </p>
+          {/* Uma única região anunciada: o estado e os avisos de demora/nova tentativa. */}
+          <div role="status">
+            <p className="mt-4 flex items-center gap-3 text-sm text-graphite-300">
+              <LoaderCircle className="size-5 animate-spin text-neon-400" aria-hidden="true" />
+              Verificando os Termos de Uso e a Política de Privacidade…
+            </p>
+            {retry ? (
+              <p className="mt-3 text-sm leading-relaxed text-signal-warn">
+                O servidor está iniciando ou instável. Tentando de novo automaticamente ({retry.attempt} de {retry.maxAttempts})…
+              </p>
+            ) : (
+              slow && (
+                <p className="mt-3 text-sm leading-relaxed text-graphite-400">
+                  Está demorando mais que o normal. Se o servidor estava parado, ele leva até um minuto para iniciar.
+                </p>
+              )
+            )}
+          </div>
         </LegalFrame>
       )}
     </div>
@@ -132,8 +162,13 @@ export function AcceptanceScreen({ documents, submitting, error, updated, onAcce
       )}
 
       <ul className="mt-5 grid gap-3 sm:grid-cols-2">
-        <DocumentLink label="Termos de Uso" url={documents.terms.url} version={documents.terms.version} />
-        <DocumentLink label="Política de Privacidade" url={documents.privacy.url} version={documents.privacy.version} />
+        <DocumentLink label="Termos de Uso" url={documents.terms.url} version={documents.terms.version} sha256={documents.terms.sha256} />
+        <DocumentLink
+          label="Política de Privacidade"
+          url={documents.privacy.url}
+          version={documents.privacy.version}
+          sha256={documents.privacy.sha256}
+        />
       </ul>
 
       <div className="mt-6 flex items-start gap-3 rounded-xl border border-white/[0.07] bg-graphite-950/60 p-4">
@@ -171,7 +206,7 @@ export function AcceptanceScreen({ documents, submitting, error, updated, onAcce
 }
 
 /** Abre o documento pela confirmação do próprio Discord (openExternalLink). */
-function DocumentLink({ label, url, version }: { label: string; url: string; version: string }) {
+function DocumentLink({ label, url, version, sha256 }: { label: string; url: string; version: string; sha256?: string | null }) {
   const { sdkReady } = useDiscord();
   const [failed, setFailed] = useState(false);
 
@@ -194,6 +229,11 @@ function DocumentLink({ label, url, version }: { label: string; url: string; ver
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-medium text-white">{label}</span>
           <span className="block font-mono text-[11px] text-graphite-400">versão {version}</span>
+          {sha256 && (
+            <span className="block font-mono text-[11px] text-graphite-400" title={`SHA-256: ${sha256}`}>
+              SHA-256 {sha256.slice(0, 12)}…
+            </span>
+          )}
         </span>
         <ExternalLink className="size-4 shrink-0 text-graphite-400 transition group-hover:text-electric-300" aria-hidden="true" />
       </button>

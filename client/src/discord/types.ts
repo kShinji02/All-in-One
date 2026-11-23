@@ -52,6 +52,11 @@ export type ConnectionStep = 'ready' | 'authorize' | 'token' | 'authenticate' | 
 export type DiscordState =
   | { status: 'unavailable' }
   | { status: 'misconfigured' }
-  | { status: 'connecting'; step: ConnectionStep }
+  | {
+      status: 'connecting';
+      step: ConnectionStep;
+      /** Nova tentativa automática depois de uma falha passageira do servidor (ex.: Render acordando). */
+      retry?: { attempt: number; maxAttempts: number };
+    }
   | { status: 'ready'; session: DiscordSession }
   | { status: 'error'; code: string; message: string; detail: string | null };

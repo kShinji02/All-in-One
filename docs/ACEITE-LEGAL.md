@@ -32,12 +32,16 @@ Fora do Discord (navegador comum) não há sessão nem recursos, e a Home aparec
 
 | Rota | Autenticação | Resposta |
 |---|---|---|
-| `GET /api/legal/status` | `Authorization: Bearer <token OAuth>` | `{ documents, accepted, acceptedAt }` |
-| `POST /api/legal/acceptance` | idem; corpo `{ termsVersion, privacyVersion }` | `201` (registrado) ou `200` (já existia) com `{ accepted: true, acceptedAt, documents }` |
+| `GET /api/legal/status` | `Authorization: Bearer <token OAuth>` | `{ documents, accepted, acceptedAt }`; cada documento: `{ version, url, sha256 }` |
+| `POST /api/legal/acceptance` | idem; corpo `{ termsVersion, privacyVersion, termsSha256?, privacySha256? }` | `201` (registrado) ou `200` (já existia) com `{ accepted: true, acceptedAt, documents }` |
 
 - A identidade vem **somente** do token, validado no Discord pelo mesmo validador do chat
   (mesmo cache, cache negativo e teto de chamadas). IDs enviados no corpo são ignorados.
-- Versões diferentes das atuais: `409 version_mismatch` com os documentos atuais.
+- Versões diferentes das atuais, ou hashes enviados diferentes dos atuais: `409 version_mismatch` com os
+  documentos atuais. Os hashes são opcionais no corpo (clientes antigos); o servidor grava sempre os hashes
+  dos documentos atuais. Hash fora do formato: `400`.
+- Documento publicado diferente do hash registrado (conferência na inicialização): `503 documents_unverified`
+  em `POST /acceptance` até a correção; o status continua respondendo.
 - Sem token ou token inválido: `401`. Banco ou Discord indisponível: `503`. Respostas com
   `Cache-Control: no-store`.
 
@@ -97,9 +101,37 @@ que só exigem ciência depende de orientação jurídica.
 As URLs ficam no mesmo arquivo, alteráveis sem mudar o código por `LEGAL_TERMS_URL` e
 `LEGAL_PRIVACY_URL` (somente HTTPS). Os links abrem pela confirmação do Discord (`openExternalLink`).
 
+### Identificação exata do conteúdo (SHA-256)
+
+Cada aceite grava, além das versões, o **SHA-256 do conteúdo publicado** de cada documento (os bytes
+que o usuário abre pela URL). Assim um registro aponta exatamente para o texto aceito, mesmo que
+alguém reutilize por engano o mesmo rótulo de versão.
+
+- **Registro de hashes:** `LEGAL_DOCUMENT_HASHES` em `server/legal/config.js`, por versão. É só de
+  inclusão: um hash registrado nunca muda; texto novo = versão nova + hash novo.
+- **Hoje:** vazio. As versões atuais são rascunhos não publicados, então os aceites continuam
+  gravando `NULL` nos hashes. Nenhum hash foi inventado para documentos antigos.
+- **Equivalência:** documentos com o mesmo rótulo de versão e hash diferente **não** são
+  equivalentes. Um aceite sem hash só vale enquanto a versão continuar sem hash; ao registrar o hash
+  de uma versão, quem aceitou antes aceita de novo (o registro antigo é preservado, não alterado).
+- **Conferência na inicialização:** com hash registrado, o servidor baixa cada documento uma vez ao
+  iniciar e compara. Divergência (o site publicado mudou) bloqueia **novos** aceites com
+  `503 documents_unverified` e registra o erro no log (sem o conteúdo); falha de rede não bloqueia.
+- A tela de aceite mostra a identificação curta (`SHA-256 1a2b3c4d5e6f…`) quando houver hash.
+
+**Ao publicar um documento final** (com autorização do responsável):
+
+1. Publique o arquivo (GitHub Pages) e confira, na pasta `server/`:
+   `npm run legal:hash -- ../legal-site/terms.html --url https://<site>/terms.html`.
+   Os dois hashes precisam ser iguais (o script só lê; não altera nada).
+2. Em `server/legal/config.js`, troque a versão em `LEGAL_DOCUMENT_VERSIONS` e acrescente
+   `"<versão>": "<hash>"` em `LEGAL_DOCUMENT_HASHES`.
+3. Implante e confira no log: `[legal] documento publicado "terms" (versão …) confere com o hash registrado.`
+
 ## Registro
 
-Tabela `legal_acceptances` (migration `server/db/migrations/001_legal_acceptances.sql`):
+Tabela `legal_acceptances` (migrations `server/db/migrations/001_legal_acceptances.sql` e
+`002_legal_document_hashes.sql`):
 
 | Coluna | Conteúdo |
 |---|---|
@@ -107,8 +139,32 @@ Tabela `legal_acceptances` (migration `server/db/migrations/001_legal_acceptance
 | `terms_version` / `privacy_version` | versões aceitas |
 | `accepted_at` | data e hora (`timestamptz`, UTC) |
 | `app_version` | versão do `server/package.json` + commit do Render (`RENDER_GIT_COMMIT`), quando houver |
+| `terms_sha256` / `privacy_sha256` | SHA-256 do conteúdo publicado de cada documento; `NULL` quando a versão não tem hash registrado (inclui todos os aceites anteriores à migration 002) |
 
-Chave primária: usuário + versões, então cliques repetidos não duplicam o registro. Não há token,
+Unicidade (índice `legal_acceptances_identity`): usuário + versões + hashes, então cliques repetidos
+não duplicam o registro.
+
+### Migration 002 (hashes)
+
+Aplicada sozinha na próxima inicialização do backend, dentro da transação das migrations e sob o
+advisory lock. Não apaga nem altera registros: acrescenta as duas colunas (vazias nos registros
+existentes), cria o índice único novo **antes** de remover a chave primária antiga e, por fim,
+remove a chave antiga. Foi testada contra um PostgreSQL real com registros pré-existentes
+(`server/test/legal-hashes.test.js`). Leva milissegundos numa tabela pequena (bloqueio exclusivo breve).
+
+**Atenção ao voltar o backend para uma versão anterior** (rollback no Render): o código anterior usa
+`ON CONFLICT (discord_user_id, terms_version, privacy_version)`, que deixa de existir depois da 002.
+Nesse caso, a consulta de aceites continua funcionando, mas **novos aceites falham** (`503`). Para
+voltar o código antigo com segurança, restaure a chave primária no Neon **somente** se não houver dois
+registros com o mesmo usuário e as mesmas versões (confira antes):
+
+```sql
+SELECT discord_user_id, terms_version, privacy_version, count(*)
+  FROM legal_acceptances GROUP BY 1, 2, 3 HAVING count(*) > 1;   -- precisa voltar vazio
+ALTER TABLE legal_acceptances ADD PRIMARY KEY (discord_user_id, terms_version, privacy_version);
+```
+
+As colunas de hash podem ficar: o código anterior as ignora. Não há token,
 IP, nome nem outros dados. Recusas não são gravadas. O prazo de guarda dos registros ainda não foi
 definido (decisão do responsável, a constar da Política de Privacidade).
 

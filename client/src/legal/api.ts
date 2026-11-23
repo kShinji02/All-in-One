@@ -8,6 +8,8 @@ import { fetchJson, HTTP_TIMEOUTS, HttpRequestError } from '@/lib/http';
 export interface LegalDocument {
   version: string;
   url: string;
+  /** SHA-256 do conteúdo publicado (null enquanto a versão não tiver hash registrado no servidor). */
+  sha256?: string | null;
 }
 
 export interface LegalDocuments {
@@ -47,10 +49,13 @@ export class LegalApiError extends Error {
   }
 }
 
+const SHA256 = /^[0-9a-f]{64}$/;
+
 function isDocument(value: unknown): value is LegalDocument {
   if (typeof value !== 'object' || value === null) return false;
-  const { version, url } = value as Record<string, unknown>;
-  return typeof version === 'string' && version !== '' && typeof url === 'string' && /^https:\/\//.test(url);
+  const { version, url, sha256 } = value as Record<string, unknown>;
+  const validHash = sha256 === undefined || sha256 === null || (typeof sha256 === 'string' && SHA256.test(sha256));
+  return typeof version === 'string' && version !== '' && typeof url === 'string' && /^https:\/\//.test(url) && validHash;
 }
 
 function parseDocuments(value: unknown): LegalDocuments | null {
@@ -113,7 +118,13 @@ export async function submitLegalAcceptance(
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ termsVersion: documents.terms.version, privacyVersion: documents.privacy.version }),
+      // Os hashes exibidos vão junto: o servidor só registra se forem os dos documentos atuais.
+      body: JSON.stringify({
+        termsVersion: documents.terms.version,
+        privacyVersion: documents.privacy.version,
+        ...(documents.terms.sha256 !== undefined && { termsSha256: documents.terms.sha256 }),
+        ...(documents.privacy.sha256 !== undefined && { privacySha256: documents.privacy.sha256 }),
+      }),
     },
     options,
   );

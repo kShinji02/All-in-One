@@ -154,7 +154,10 @@ describe("armazenamento PostgreSQL (driver pg contra Postgres real)", () => {
     await store.ready();
     assert.deepEqual(await runMigrations(pool), [], "segunda execução não aplica nada");
     const { rows } = await pool.query("SELECT version, name FROM schema_migrations ORDER BY version");
-    assert.deepEqual(rows, [{ version: 1, name: "001_legal_acceptances.sql" }]);
+    assert.deepEqual(rows, [
+      { version: 1, name: "001_legal_acceptances.sql" },
+      { version: 2, name: "002_legal_document_hashes.sql" },
+    ]);
   });
 
   test("o registro guarda só o necessário: nenhuma coluna de token, IP ou nome", async () => {
@@ -163,7 +166,7 @@ describe("armazenamento PostgreSQL (driver pg contra Postgres real)", () => {
     );
     assert.deepEqual(
       rows.map((r) => r.column_name),
-      ["discord_user_id", "terms_version", "privacy_version", "accepted_at", "app_version"],
+      ["discord_user_id", "terms_version", "privacy_version", "accepted_at", "app_version", "terms_sha256", "privacy_sha256"],
     );
   });
 
@@ -316,7 +319,7 @@ describe("persistência após reinicialização", () => {
           await pool.end();
         }
       })();
-      assert.deepEqual(rows.map((r) => r.version), [1], "a 1ª inicialização criou o schema");
+      assert.deepEqual(rows.map((r) => r.version).sort(), [1, 2], "a 1ª inicialização criou o schema");
 
       const second = await run();
       assert.doesNotMatch(second.output, /migrations aplicadas/, "a 2ª inicialização não reaplica");
@@ -401,7 +404,10 @@ describe("rotas /api/legal", () => {
     assert.equal(res.status, 200);
     assert.equal(res.headers.get("cache-control"), "no-store");
     assert.deepEqual(res.body, {
-      documents: { terms: { version: "t-1", url: DEFAULT_LEGAL_URLS.terms }, privacy: { version: "p-1", url: DEFAULT_LEGAL_URLS.privacy } },
+      documents: {
+        terms: { version: "t-1", url: DEFAULT_LEGAL_URLS.terms, sha256: null },
+        privacy: { version: "p-1", url: DEFAULT_LEGAL_URLS.privacy, sha256: null },
+      },
       accepted: false,
       acceptedAt: null,
     });

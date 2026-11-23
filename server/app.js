@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import express from "express";
 import { createSlidingWindowLimiter } from "./chat/rate-limit.js";
 
@@ -20,8 +21,10 @@ export const TOKEN_GLOBAL_RATE_LIMIT = Object.freeze({ limit: 240, windowMs: 60_
 export const TOKEN_EXCHANGE_TIMEOUT_MS = 10_000;
 
 /**
- * PROXY_DIAGNOSTICS: ajuda a escolher TRUST_PROXY numa implantação nova. Registra QUANTAS
- * entradas o X-Forwarded-For tem em /api/health (nunca os endereços), no máximo N vezes.
+ * PROXY_DIAGNOSTICS: ajuda a escolher TRUST_PROXY numa implantação nova. Em /api/health,
+ * registra no máximo N vezes: quantas entradas o X-Forwarded-For tem, o TIPO de cada uma
+ * (loopback/private/cgnat/public, da direita para a esquerda), o tipo do endereço do socket
+ * e do `req.ip` resultante, e QUAIS cabeçalhos de IP de proxies existem. Nunca os endereços.
  * Uma requisição feita sem X-Forwarded-For próprio mostra quantos proxies a acrescentaram.
  */
 export const PROXY_DIAGNOSTICS_MAX_LOGS = 20;
@@ -45,9 +48,53 @@ export const SECURITY_HEADERS = Object.freeze({
   "Referrer-Policy": "no-referrer",
 });
 
+/** Cabeçalhos com IP do cliente que alguns proxies acrescentam (só a presença é registrada). */
+export const PROXY_IP_HEADERS = Object.freeze(["cf-connecting-ip", "true-client-ip", "x-real-ip", "forwarded"]);
+
+/** Tamanho máximo dos corpos JSON (/api/token e /api/legal usam poucos bytes). */
+export const JSON_BODY_LIMIT = "8kb";
+
 export function countForwardedFor(header) {
   const raw = Array.isArray(header) ? header.join(",") : header ?? "";
   return raw.split(",").filter((value) => value.trim() !== "").length;
+}
+
+/** Tipo de um endereço IP, sem expô-lo: "loopback" | "private" | "cgnat" | "public" | "invalid". */
+export function addressKind(raw) {
+  let address = String(raw ?? "").trim();
+  if (address.startsWith("::ffff:") && isIP(address.slice(7)) === 4) address = address.slice(7);
+  const version = isIP(address);
+  if (version === 4) {
+    const [a, b] = address.split(".").map(Number);
+    if (a === 127) return "loopback";
+    if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254)) return "private";
+    if (a === 100 && b >= 64 && b <= 127) return "cgnat";
+    return "public";
+  }
+  if (version === 6) {
+    const lower = address.toLowerCase();
+    if (lower === "::1") return "loopback";
+    if (/^f[cd]/.test(lower) || /^fe[89ab]/.test(lower)) return "private";
+    return "public";
+  }
+  return "invalid";
+}
+
+/** Linha de diagnóstico do proxy (somente contagens e tipos; nenhum endereço). */
+export function describeProxyChain(req) {
+  const header = req.headers["x-forwarded-for"];
+  const entries = (Array.isArray(header) ? header.join(",") : header ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const kinds = entries.reverse().map(addressKind);
+  const present = PROXY_IP_HEADERS.filter((name) => req.headers[name] !== undefined);
+  return (
+    `X-Forwarded-For com ${entries.length} entrada(s)` +
+    (kinds.length ? ` (da direita para a esquerda: ${kinds.join(", ")})` : "") +
+    `; socket: ${addressKind(req.socket?.remoteAddress)}; req.ip: ${addressKind(req.ip)}` +
+    `; outros cabeçalhos de IP: ${present.length ? present.join(", ") : "nenhum"}.`
+  );
 }
 
 /**
@@ -96,14 +143,14 @@ export function createApp({
   }, tokenRateLimit.windowMs);
   sweeper.unref?.();
 
-  app.use(express.json());
+  app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
   // Verificação de disponibilidade. Não revela valores de configuração.
   let diagnosticsLeft = proxyDiagnostics ? PROXY_DIAGNOSTICS_MAX_LOGS : 0;
   app.get("/api/health", (req, res) => {
     if (diagnosticsLeft > 0) {
       diagnosticsLeft -= 1;
-      logger.log(`[proxy] /api/health: X-Forwarded-For com ${countForwardedFor(req.headers["x-forwarded-for"])} entrada(s).`);
+      logger.log(`[proxy] /api/health: ${describeProxyChain(req)}`);
     }
     res.send({ ok: true, oauthConfigured, chatConfigured, ...(legalStore && { legalStore }) });
   });

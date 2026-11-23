@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   AUTH_FAILURE_LIMIT,
@@ -15,6 +16,7 @@ import {
   MAX_PAYLOAD_BYTES,
   MEMBERSHIP_REVALIDATE_MS,
   MESSAGE_RATE_LIMIT,
+  REPEATED_MESSAGE_LIMIT,
   UPGRADE_GLOBAL_RATE_LIMIT,
   UPGRADE_RATE_LIMIT,
   USER_AUTH_RATE_LIMIT,
@@ -52,6 +54,7 @@ export function attachChat(server, options = {}) {
     maxConnectionsPerUser = MAX_CONNECTIONS_PER_USER,
     maxConnectionsPerRoom = MAX_CONNECTIONS_PER_ROOM,
     messageRateLimit = MESSAGE_RATE_LIMIT,
+    repeatedMessageLimit = REPEATED_MESSAGE_LIMIT,
     frameRateLimit = FRAME_RATE_LIMIT,
     rooms = createRoomRegistry(),
     now = Date.now,
@@ -84,6 +87,7 @@ export function attachChat(server, options = {}) {
     maxConnectionsPerUser,
     maxConnectionsPerRoom,
     messageLimiter: createSlidingWindowLimiter({ ...messageRateLimit, now }),
+    repeatLimiter: createSlidingWindowLimiter({ ...repeatedMessageLimit, now }),
     frameLimiter: createSlidingWindowLimiter({ ...frameRateLimit, now }),
     authFailures: createSlidingWindowLimiter({ ...authFailureLimit, now }),
     upgrades: createSlidingWindowLimiter({ ...upgradeRateLimit, now }),
@@ -136,6 +140,7 @@ export function attachChat(server, options = {}) {
       ws.ping();
     }
     context.messageLimiter.sweep();
+    context.repeatLimiter.sweep();
     context.frameLimiter.sweep();
     context.authFailures.sweep();
     context.upgrades.sweep();
@@ -346,7 +351,13 @@ function leaveRoom(ws, session, { rooms, userConnections }) {
   else userConnections.delete(session.user.id);
 }
 
-function handleSend(ws, session, frame, { rooms, messageLimiter, now }) {
+/** Chave anti-spam: usuário + resumo do texto (sem diferenciar maiúsculas e espaços); o texto não é guardado. */
+function repeatKey(userId, text) {
+  const fingerprint = createHash("sha256").update(text.toLowerCase().replace(/\s+/g, " "), "utf8").digest("base64url");
+  return `${userId}|${fingerprint}`;
+}
+
+function handleSend(ws, session, frame, { rooms, messageLimiter, repeatLimiter, now }) {
   const parsed = parseSendFrame(frame);
   const withNonce = (payload, nonce) => (nonce ? { ...payload, nonce } : payload);
 
@@ -360,11 +371,18 @@ function handleSend(ws, session, frame, { rooms, messageLimiter, now }) {
     if (original) return send(ws, { type: "message", message: original, nonce: parsed.nonce });
   }
 
+  // Anti-spam: o mesmo texto repetido demais é recusado antes de consumir o limite de envio.
+  const repeated = repeatKey(session.user.id, parsed.text);
+  if (!repeatLimiter.peek(repeated).allowed) {
+    return send(ws, withNonce({ type: "error", code: "repeated_message" }, parsed.nonce));
+  }
+
   // Limite por usuário (soma todas as conexões dele).
   const limit = messageLimiter.hit(session.user.id);
   if (!limit.allowed) {
     return send(ws, withNonce({ type: "rate_limited", retryAfterMs: limit.retryAfterMs }, parsed.nonce));
   }
+  repeatLimiter.hit(repeated);
 
   const message = createMessage(session.user, parsed.text, now);
   rooms.append(session.instanceId, message, parsed.nonce);
