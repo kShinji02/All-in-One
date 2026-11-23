@@ -231,7 +231,7 @@ minuto, porque o serviço precisa acordar.
 
 | Passo | Ação | Resultado esperado |
 |---|---|---|
-| 1 | Em **Participantes**, clique em **Convidar para a Activity** | Abre a tela de convite do próprio Discord (no celular, depende do app; se não abrir, aparece a orientação de usar o convite do Discord) |
+| 1 | Em **Participantes**, clique em **Convidar participantes** (no topo da seção) | Abre a tela de convite do próprio Discord (no celular, depende do app; se não abrir, aparece a orientação de usar o convite do Discord) |
 | 2 | Leia o painel **Compartilhar tela** no computador e no celular | Mostra só o caminho do dispositivo atual; o compartilhamento é feito pelos controles da chamada de voz do Discord |
 | 3 | Com A e B no chat, A clica em **Ocultar** numa mensagem de B | As mensagens de B somem só na tela de A ("… ocultada(s) só para você", com **Mostrar**); B e os demais continuam vendo tudo |
 | 4 | B envia a mesma mensagem 4 vezes em menos de 1 minuto | A 4ª fica "Não enviada: mesma mensagem enviada muitas vezes seguidas"; ninguém a recebe |

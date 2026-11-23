@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DiscordContext, type DiscordContextValue } from '@/discord/DiscordProvider';
@@ -12,12 +12,12 @@ import { ScreenShareView } from '@/features/screenshare/ScreenShareView';
  * - compartilhamento de tela: só orientação, porque o SDK não oferece captura de tela.
  */
 
-const fake = vi.hoisted(() => ({ invite: vi.fn<() => Promise<unknown>>(), commands: [] as string[] }));
+const fake = vi.hoisted(() => ({ invite: vi.fn<() => Promise<unknown>>(), commands: [] as string[], hasInvite: true }));
 
 vi.mock('@/discord/sdk', () => ({
   getDiscordSdk: () =>
     new Proxy(
-      { commands: { openInviteDialog: () => fake.invite() } },
+      { get commands() { return fake.hasInvite ? { openInviteDialog: () => fake.invite() } : {}; } },
       {
         get(target, prop) {
           fake.commands.push(String(prop));
@@ -52,31 +52,86 @@ function renderWith(view: React.ReactNode, state: DiscordState, sdkReady = true)
 beforeEach(() => {
   fake.invite.mockReset();
   fake.commands.length = 0;
+  fake.hasInvite = true;
 });
 
+const inviteButton = () => screen.findByRole('button', { name: 'Convidar participantes' });
+
 describe('Participantes — convidar pela tela do Discord', () => {
-  it('com o SDK pronto: o botão abre o convite oficial do Discord', async () => {
+  it('com o SDK pronto: "Convidar participantes" aparece no topo da seção, antes da lista, e abre o convite oficial', async () => {
     fake.invite.mockResolvedValue({});
     renderWith(<ParticipantsView />, READY('desktop'));
-    await userEvent.click(await screen.findByRole('button', { name: 'Convidar para a Activity' }));
+    const button = await inviteButton();
+    const section = screen.getByRole('heading', { name: /participantes/i }).closest('section')!;
+    expect(section).toContainElement(button);
+    // Vem antes do conteúdo da lista (visível sem rolar).
+    const notice = await screen.findByText('Ninguém conectado');
+    expect(button.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(button).toHaveAccessibleDescription(/tela de convite do próprio Discord/i);
+
+    await userEvent.click(button);
     expect(fake.invite).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(button).toBeEnabled();
+  });
+
+  it('enquanto o Discord abre o convite: "Abrindo convite…", desabilitado, e cliques repetidos não repetem o comando', async () => {
+    let resolve!: () => void;
+    fake.invite.mockImplementation(() => new Promise<void>((r) => (resolve = r)));
+    renderWith(<ParticipantsView />, READY('desktop'));
+    const button = await inviteButton();
+    await userEvent.click(button);
+    const busy = screen.getByRole('button', { name: 'Abrindo convite…' });
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute('aria-busy', 'true');
+    fireEvent.click(busy);
+    fireEvent.click(busy);
+    expect(fake.invite).toHaveBeenCalledTimes(1);
+    await act(async () => resolve());
+    expect(await inviteButton()).toBeEnabled();
+  });
+
+  it('dois cliques no mesmo ciclo (antes de o botão desabilitar): um único comando', async () => {
+    fake.invite.mockImplementation(() => new Promise(() => undefined));
+    renderWith(<ParticipantsView />, READY('desktop'));
+    const button = await inviteButton();
+    act(() => {
+      button.click();
+      button.click();
+    });
+    expect(fake.invite).toHaveBeenCalledTimes(1);
+  });
+
+  it('Discord sem o comando (versão antiga): não chama nada e orienta a usar o convite do próprio Discord', async () => {
+    fake.hasInvite = false;
+    renderWith(<ParticipantsView />, READY('desktop'));
+    await userEvent.click(await inviteButton());
+    expect(await screen.findByRole('alert')).toHaveTextContent(/esta versão do discord não abre o convite pela activity/i);
+    expect(fake.invite).not.toHaveBeenCalled();
+  });
+
+  it('se o Discord recusar o comando: orienta, registra só o código e permite tentar de novo', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    fake.invite.mockRejectedValueOnce(Object.assign(new Error('nope'), { code: 4006 })).mockResolvedValueOnce({});
+    renderWith(<ParticipantsView />, READY('mobile'));
+    await userEvent.click(await inviteButton());
+    expect(await screen.findByRole('alert')).toHaveTextContent(/não abriu o convite agora/i);
+    expect(warn).toHaveBeenCalledWith('[participants] openInviteDialog falhou (4006).');
+    await userEvent.click(await inviteButton());
+    expect(fake.invite).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('se o Discord recusar o comando: explica e não quebra a lista', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    fake.invite.mockRejectedValue(Object.assign(new Error('nope'), { code: 4006 }));
-    renderWith(<ParticipantsView />, READY('mobile'));
-    await userEvent.click(await screen.findByRole('button', { name: 'Convidar para a Activity' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(/não abriu o convite/i);
-    expect(warn).toHaveBeenCalledWith('[participants] openInviteDialog falhou (4006).');
+  it('aparece mesmo com a autenticação em erro (o convite só depende do SDK conectado)', async () => {
+    renderWith(<ParticipantsView />, { status: 'error', code: 'backend_unavailable', message: 'x', detail: null }, true);
+    expect(await inviteButton()).toBeInTheDocument();
   });
 
   it('antes de o SDK conectar (ou fora do Discord): sem o botão', () => {
     renderWith(<ParticipantsView />, { status: 'connecting', step: 'ready' }, false);
-    expect(screen.queryByRole('button', { name: 'Convidar para a Activity' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Convidar participantes' })).not.toBeInTheDocument();
     renderWith(<ParticipantsView />, { status: 'unavailable' }, false);
-    expect(screen.queryAllByRole('button', { name: 'Convidar para a Activity' })).toHaveLength(0);
+    expect(screen.queryAllByRole('button', { name: 'Convidar participantes' })).toHaveLength(0);
   });
 });
 

@@ -100,6 +100,14 @@ No PowerShell, na pasta `client/`:
    Anote a URL exibida, `https://all-in-one-frontend.<subdomínio>.workers.dev`, e o **Version ID**.
 6. Conferir sem o Discord: abrir a URL → a página carrega (fora do Discord, mostra a Home sem
    sessão). `…/api/health` mostra a própria página, não JSON: é o esperado.
+
+> **O push para o GitHub NÃO publica o frontend.** Ele só implanta o backend no Render. Depois de
+> cada mudança no `client/`, é preciso rodar `npm run cf:deploy`. Para conferir se a Cloudflare
+> serve o build atual, compare o bundle publicado com o local (mesmo nome = mesma versão):
+>
+> ```powershell
+> (Invoke-WebRequest https://all-in-one-frontend.<subdomínio>.workers.dev/).Content -match '/assets/index-[^"]+\.js' | Out-Null; $Matches[0]; (Get-ChildItem dist/assets/index-*.js).Name
+> ```
 7. No Developer Portal, **Activities → URL Mappings**:
 
    | PREFIX | TARGET |

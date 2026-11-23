@@ -157,7 +157,7 @@ link comum (`target="_blank"`, `rel="noopener noreferrer nofollow"`).
 
 | Recurso | Como | Observação |
 |---|---|---|
-| Convite | `commands.openInviteDialog` (botão **Convidar para a Activity** em Participantes) | A tela de convite é do Discord; a Activity não recebe contatos. Se o comando falhar, a interface orienta a usar o convite do próprio Discord |
+| Convite | `commands.openInviteDialog` (botão **Convidar participantes**, no topo de Participantes) | A tela de convite é do Discord; a Activity não recebe contatos. Se o comando falhar, a interface orienta a usar o convite do próprio Discord |
 | Compartilhamento de tela | Nenhum comando: o Embedded App SDK não oferece captura nem transmissão de tela | O painel **Compartilhar tela** só explica onde fica o botão nativo da chamada de voz, conforme `platform` (computador/celular). A Activity nunca acessa tela, câmera ou microfone |
 | Links externos | `commands.openExternalLink` | Ver abaixo |
 
